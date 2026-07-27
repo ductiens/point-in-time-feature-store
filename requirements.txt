@@ -1,0 +1,16 @@
+duckdb>=0.10.0
+pandas
+pyarrow
+scikit-learn
+lightgbm
+fastapi
+uvicorn
+redis
+pydantic
+pyyaml
+click
+matplotlib
+numpy
+kaggle
+pytest
+httpx

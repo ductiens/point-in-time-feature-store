@@ -1,0 +1,24 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Dữ liệu và output
+data/raw/
+offline_store/
+*.csv
+*.parquet
+warehouse.duckdb
+backfill_log.jsonl
+
+# Redis
+dump.rdb
+
+# Môi trường
+.env
+
+# IDE
+.vscode/
+.idea/
