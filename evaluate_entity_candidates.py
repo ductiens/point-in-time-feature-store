@@ -1,0 +1,213 @@
+from pathlib import Path
+
+import duckdb
+import pandas as pd
+
+
+DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
+OUTPUT_PATH = Path("reports/entity_candidate_results.csv")
+
+
+# Mỗi candidate là một nhóm cột được dùng để đại diện cho một entity.
+CANDIDATES: dict[str, list[str]] = {
+    "card1_addr1": [
+        "card1",
+        "addr1",
+    ],
+    "card1_card2_addr1": [
+        "card1",
+        "card2",
+        "addr1",
+    ],
+    "card1_card2_card5_addr1": [
+        "card1",
+        "card2",
+        "card5",
+        "addr1",
+    ],
+    "card1_card2_addr1_D1": [
+        "card1",
+        "card2",
+        "addr1",
+        "D1",
+    ],
+}
+
+
+def build_uid_expression(columns: list[str]) -> str:
+    """Tạo biểu thức MD5 từ danh sách cột."""
+
+    cast_columns = [
+        f"CAST({column} AS VARCHAR)"
+        for column in columns
+    ]
+
+    joined_columns = ", ".join(cast_columns)
+
+    return f"md5(concat_ws('|', {joined_columns}))"
+
+
+def build_valid_condition(columns: list[str]) -> str:
+    """
+    Chỉ tạo UID khi tất cả cột của candidate đều có dữ liệu.
+
+    Không dùng COALESCE(..., 'na') ở bước đánh giá vì có thể gom rất
+    nhiều dòng thiếu dữ liệu thành một entity giả khổng lồ.
+    """
+
+    return " AND ".join(
+        f"{column} IS NOT NULL"
+        for column in columns
+    )
+
+
+def evaluate_candidate(
+    connection: duckdb.DuckDBPyConnection,
+    name: str,
+    columns: list[str],
+) -> dict:
+    uid_expression = build_uid_expression(columns)
+    valid_condition = build_valid_condition(columns)
+
+    query = f"""
+        WITH candidate_rows AS (
+            SELECT
+                CASE
+                    WHEN {valid_condition}
+                    THEN {uid_expression}
+                    ELSE NULL
+                END AS uid
+            FROM read_csv_auto(
+                '{DATA_PATH.as_posix()}',
+                header = true
+            )
+        ),
+
+        entity_counts AS (
+            SELECT
+                uid,
+                COUNT(*) AS n_txn
+            FROM candidate_rows
+            WHERE uid IS NOT NULL
+            GROUP BY uid
+        )
+
+        SELECT
+            (SELECT COUNT(*) FROM candidate_rows) AS total_rows,
+
+            (
+                SELECT COUNT(*)
+                FROM candidate_rows
+                WHERE uid IS NOT NULL
+            ) AS rows_with_uid,
+
+            ROUND(
+                100.0 *
+                (
+                    SELECT COUNT(*)
+                    FROM candidate_rows
+                    WHERE uid IS NOT NULL
+                ) /
+                NULLIF(
+                    (SELECT COUNT(*) FROM candidate_rows),
+                    0
+                ),
+                2
+            ) AS coverage_pct,
+
+            COUNT(*) AS n_entities,
+
+            ROUND(
+                100.0 *
+                COUNT(*) FILTER (WHERE n_txn >= 2) /
+                NULLIF(COUNT(*), 0),
+                2
+            ) AS repeat_entity_pct,
+
+            ROUND(
+                100.0 *
+                SUM(n_txn) FILTER (WHERE n_txn >= 2) /
+                NULLIF(SUM(n_txn), 0),
+                2
+            ) AS repeat_row_pct,
+
+            MEDIAN(n_txn) AS median_txn_per_entity,
+
+            APPROX_QUANTILE(n_txn, 0.95)
+                AS p95_txn_per_entity,
+
+            MAX(n_txn) AS max_txn_per_entity
+
+        FROM entity_counts
+    """
+
+    row = connection.sql(query).fetchone()
+
+    return {
+        "candidate": name,
+        "columns": " + ".join(columns),
+        "total_rows": row[0],
+        "rows_with_uid": row[1],
+        "coverage_pct": row[2],
+        "n_entities": row[3],
+        "repeat_entity_pct": row[4],
+        "repeat_row_pct": row[5],
+        "median_txn_per_entity": row[6],
+        "p95_txn_per_entity": row[7],
+        "max_txn_per_entity": row[8],
+    }
+
+
+def main() -> None:
+    if not DATA_PATH.exists():
+        raise FileNotFoundError(
+            f"Không tìm thấy dataset: {DATA_PATH.resolve()}"
+        )
+
+    connection = duckdb.connect()
+
+    results = [
+        evaluate_candidate(
+            connection=connection,
+            name=name,
+            columns=columns,
+        )
+        for name, columns in CANDIDATES.items()
+    ]
+
+    connection.close()
+
+    result_df = pd.DataFrame(results)
+
+    # Candidate có tỷ lệ entity với ít nhất 2 giao dịch cao hơn được hiển thị trước.
+    result_df = result_df.sort_values(
+        by=[
+            "repeat_entity_pct",
+            "coverage_pct",
+        ],
+        ascending=False,
+    ).reset_index(drop=True)
+
+    OUTPUT_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    result_df.to_csv(
+        OUTPUT_PATH,
+        index=False,
+    )
+
+    pd.set_option("display.max_columns", None)
+    pd.set_option("display.width", 220)
+
+    print("\nKẾT QUẢ ĐÁNH GIÁ PSEUDO-ENTITY\n")
+    print(result_df.to_string(index=False))
+
+    print(
+        f"\nĐã lưu kết quả tại: {OUTPUT_PATH.as_posix()}"
+    )
+
+
+if __name__ == "__main__":
+    main()
