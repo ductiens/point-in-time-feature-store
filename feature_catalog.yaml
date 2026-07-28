@@ -1,0 +1,38 @@
+version: "1.0.0"
+features:
+  - name: sum_amt_24h
+    description: Tổng giá trị giao dịch của uid trong 24 giờ trước cutoff.
+    entity: uid
+    aggregation: sum
+    source_column: amount
+    window_hours: 24
+    event_time: event_ts
+    version: "1.0.0"
+    default_value: 0
+  - name: count_txn_24h
+    description: Số giao dịch của uid trong 24 giờ trước cutoff.
+    entity: uid
+    aggregation: count
+    source_column: transaction_id
+    window_hours: 24
+    event_time: event_ts
+    version: "1.0.0"
+    default_value: 0
+  - name: sum_amt_7d
+    description: Tổng giá trị giao dịch của uid trong 7 ngày trước cutoff.
+    entity: uid
+    aggregation: sum
+    source_column: amount
+    window_hours: 168
+    event_time: event_ts
+    version: "1.0.0"
+    default_value: 0
+  - name: time_since_last_txn_sec
+    description: Số giây từ giao dịch gần nhất của uid trong 720 giờ trước cutoff.
+    entity: uid
+    aggregation: time_since_last
+    source_column: event_ts
+    window_hours: 720
+    event_time: event_ts
+    version: "1.0.0"
+    default_value: null
