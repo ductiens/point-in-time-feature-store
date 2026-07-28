@@ -195,15 +195,19 @@ def print_summary(
     connection.sql(
         """
         SELECT
+            -- Tổng số giao dịch trong bảng transactions.
             COUNT(*) AS total_rows,
 
+            -- Số TransactionID duy nhất sau khi đổi tên thành transaction_id.
             COUNT(DISTINCT transaction_id)
                 AS distinct_transaction_ids,
 
+            -- Số giao dịch tạo được pseudo-entity uid hợp lệ.
             COUNT(*) FILTER (WHERE uid IS NOT NULL)
                 AS rows_with_uid,
 
             ROUND(
+                -- Tỷ lệ % giao dịch có uid hợp lệ.
                 100.0
                 * COUNT(*) FILTER (WHERE uid IS NOT NULL)
                 / COUNT(*),
@@ -211,10 +215,14 @@ def print_summary(
             ) AS uid_coverage_pct,
 
             ROUND(
+                -- Tỷ lệ fraud trung bình vì label chỉ gồm 0 và 1.
+                -- AVG(label) * 100 chính là % giao dịch gian lận.
                 100.0 * AVG(label),
                 4
             ) AS fraud_rate_pct,
 
+            -- Khoảng thời gian sớm nhất và muộn nhất trong bảng.
+            -- Dùng để kiểm tra event_ts đã được chuyển thành timestamp đúng.
             MIN(event_ts) AS min_event_ts,
             MAX(event_ts) AS max_event_ts
 
@@ -227,6 +235,8 @@ def print_summary(
     connection.sql(
         """
         WITH entity_counts AS (
+            -- Gom các giao dịch có uid hợp lệ theo từng pseudo-entity.
+            -- n_txn là số giao dịch của mỗi uid, dùng để kiểm tra uid có lặp lại hay không.
             SELECT
                 uid,
                 COUNT(*) AS n_txn
@@ -236,9 +246,11 @@ def print_summary(
         )
 
         SELECT
+            -- Tổng số pseudo-entity hợp lệ tạo được từ bảng transactions.
             COUNT(*) AS n_entities,
 
             ROUND(
+                -- % pseudo-entity có ít nhất 2 giao dịch.
                 100.0
                 * COUNT(*) FILTER (WHERE n_txn >= 2)
                 / COUNT(*),
@@ -246,17 +258,21 @@ def print_summary(
             ) AS repeat_entity_pct,
 
             ROUND(
+                -- % giao dịch nằm trong các pseudo-entity có ít nhất 2 giao dịch.
                 100.0
                 * SUM(n_txn) FILTER (WHERE n_txn >= 2)
                 / SUM(n_txn),
                 2
             ) AS repeat_row_pct,
 
+            -- Trung vị số giao dịch trên mỗi pseudo-entity. Nếu median >= 2 thì entity lặp lại là khá phổ biến.
             MEDIAN(n_txn) AS median_txn_per_entity,
 
+            -- Mốc 95% số giao dịch trên mỗi pseudo-entity.
             APPROX_QUANTILE(n_txn, 0.95)
                 AS p95_txn_per_entity,
 
+            -- Số giao dịch lớn nhất của một pseudo-entity.
             MAX(n_txn) AS max_txn_per_entity
 
         FROM entity_counts
@@ -267,6 +283,7 @@ def print_summary(
 
     connection.sql(
         """
+        -- Xem nhanh 5 dòng đầu để kiểm tra trực quan schema và dữ liệu mẫu.
         SELECT *
         FROM transactions
         LIMIT 5

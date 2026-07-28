@@ -71,6 +71,8 @@ def evaluate_candidate(
 
     query = f"""
         WITH candidate_rows AS (
+            -- Tạo uid cho candidate hiện tại từ các cột được chọn.
+            -- Nếu một trong các cột bị NULL thì uid = NULL để không tính nhầm entity thiếu dữ liệu.
             SELECT
                 CASE
                     WHEN {valid_condition}
@@ -84,6 +86,8 @@ def evaluate_candidate(
         ),
 
         entity_counts AS (
+            -- Gom các dòng có uid hợp lệ theo entity và đếm số giao dịch của từng entity.
+            -- n_txn là chỉ số chính để biết entity đó có xuất hiện lặp lại hay không.
             SELECT
                 uid,
                 COUNT(*) AS n_txn
@@ -93,15 +97,18 @@ def evaluate_candidate(
         )
 
         SELECT
+            -- Đếm tất cả giao dịch, kể cả giao dịch có uid = NULL
             (SELECT COUNT(*) FROM candidate_rows) AS total_rows,
 
             (
+                -- Số dòng tạo được uid hợp lệ cho candidate này.
                 SELECT COUNT(*)
                 FROM candidate_rows
                 WHERE uid IS NOT NULL
             ) AS rows_with_uid,
 
             ROUND(
+                -- Tỷ lệ coverage: bao nhiêu % giao dịch có uid hợp lệ.
                 100.0 *
                 (
                     SELECT COUNT(*)
@@ -115,9 +122,11 @@ def evaluate_candidate(
                 2
             ) AS coverage_pct,
 
+            -- Số entity khác nhau tạo được từ candidate.
             COUNT(*) AS n_entities,
 
             ROUND(
+                -- % entity có ít nhất 2 giao dịch. phần lớn uid nên có n_txn >= 2.
                 100.0 *
                 COUNT(*) FILTER (WHERE n_txn >= 2) /
                 NULLIF(COUNT(*), 0),
@@ -125,17 +134,21 @@ def evaluate_candidate(
             ) AS repeat_entity_pct,
 
             ROUND(
+                -- % dòng giao dịch nằm trong các entity có ít nhất 2 giao dịch.
                 100.0 *
                 SUM(n_txn) FILTER (WHERE n_txn >= 2) /
                 NULLIF(SUM(n_txn), 0),
                 2
             ) AS repeat_row_pct,
 
+            -- Trung vị số giao dịch trên mỗi entity. Nghĩa là entity điển hình có khoảng 2 giao dịch.
             MEDIAN(n_txn) AS median_txn_per_entity,
 
+            -- Mốc 95% số giao dịch/entity. Khoảng 95% entity có số giao dịch nhỏ hơn hoặc bằng giá trị này.
             APPROX_QUANTILE(n_txn, 0.95)
                 AS p95_txn_per_entity,
 
+            -- Lấy entity có nhiều giao dịch nhất.
             MAX(n_txn) AS max_txn_per_entity
 
         FROM entity_counts
