@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import duckdb
@@ -32,6 +33,13 @@ CANDIDATES: dict[str, list[str]] = {
         "D1",
     ],
 }
+
+SELECTED_CANDIDATE = "card1_card2_addr1"
+SELECTION_REASON = (
+    "Cân bằng độ phủ 87.45%, tỷ lệ entity lặp 60.49% và tỷ lệ dòng "
+    "thuộc entity lặp 97.15%; chi tiết hơn card1 + addr1 nhưng không "
+    "bị phân mảnh mạnh như candidate có D1."
+)
 
 
 def build_uid_expression(columns: list[str]) -> str:
@@ -172,6 +180,8 @@ def evaluate_candidate(
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
+
     if not DATA_PATH.exists():
         raise FileNotFoundError(
             f"Không tìm thấy dataset: {DATA_PATH.resolve()}"
@@ -191,6 +201,12 @@ def main() -> None:
     connection.close()
 
     result_df = pd.DataFrame(results)
+    result_df["selected"] = (
+        result_df["candidate"] == SELECTED_CANDIDATE
+    )
+    result_df["selection_reason"] = result_df["selected"].map(
+        {True: SELECTION_REASON, False: ""}
+    )
 
     # Candidate có tỷ lệ entity với ít nhất 2 giao dịch cao hơn được hiển thị trước.
     result_df = result_df.sort_values(

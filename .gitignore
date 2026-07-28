@@ -12,6 +12,10 @@ offline_store/
 *.parquet
 warehouse.duckdb
 backfill_log.jsonl
+AGENTS.md
+PROJECT_SPEC.md
+STATUS.md
+TODO.md
 
 # Redis
 dump.rdb

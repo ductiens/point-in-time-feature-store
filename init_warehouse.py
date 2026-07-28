@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import duckdb
@@ -292,6 +293,8 @@ def print_summary(
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
+
     if not DATA_PATH.exists():
         raise FileNotFoundError(
             f"Không tìm thấy dataset: {DATA_PATH.resolve()}"
