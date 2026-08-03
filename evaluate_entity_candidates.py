@@ -231,7 +231,14 @@ def main() -> None:
     pd.set_option("display.width", 220)
 
     print("\nKẾT QUẢ ĐÁNH GIÁ PSEUDO-ENTITY\n")
-    print(result_df.to_string(index=False))
+    print(
+        result_df.drop(
+            columns=[
+                "selected",
+                "selection_reason",
+            ]
+        ).to_string(index=False)
+    )
 
     print(
         f"\nĐã lưu kết quả tại: {OUTPUT_PATH.as_posix()}"
