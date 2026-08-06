@@ -142,7 +142,7 @@ def evaluate_candidate(
             ) AS repeat_entity_pct,
 
             ROUND(
-                -- % dòng giao dịch nằm trong các entity có ít nhất 2 giao dịch.
+                -- Trong toàn bộ các giao dịch, có bao nhiêu % giao dịch thuộc về những khách hàng (entity) đã từng giao dịch ít nhất 2 lần?
                 100.0 *
                 SUM(n_txn) FILTER (WHERE n_txn >= 2) /
                 NULLIF(SUM(n_txn), 0),

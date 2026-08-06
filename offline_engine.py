@@ -8,7 +8,7 @@ from catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalo
 
 DATABASE_PATH = Path("warehouse.duckdb")
 
-
+# Những giao dịch cần tính feature
 def create_label_spine(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
@@ -22,7 +22,7 @@ def create_label_spine(connection: duckdb.DuckDBPyConnection) -> None:
         """
     )
 
-
+# Lịch sử giao dịch dùng để tính feature
 def create_feature_events(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
@@ -37,7 +37,7 @@ def create_feature_events(connection: duckdb.DuckDBPyConnection) -> None:
         """
     )
 
-
+# Tính tổng cộng dồn và số lượng giao dịch theo thời gian
 def create_feature_cumsum(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
@@ -71,17 +71,17 @@ def create_feature_cumsum(connection: duckdb.DuckDBPyConnection) -> None:
         """
     )
 
-
+# đổi giá trị từ YAML sang SQL
 def _default_sql(feature: FeatureDefinition) -> str:
     if feature.default_value is None:
         return "NULL"
     return repr(feature.default_value)
 
-
+# tạo tên: lower_24h, lower_48h,...
 def _lower_alias(window_hours: int) -> str:
     return f"lower_{window_hours}h"
 
-
+# tính giá trị từ L đến R trong mảng cộng dồn
 def _cumulative_feature_sql(feature: FeatureDefinition) -> str:
     cumulative_column = {
         "sum": "cumulative_amount",
@@ -101,7 +101,7 @@ def _cumulative_feature_sql(feature: FeatureDefinition) -> str:
         )
     return expression
 
-
+# số giây từ giao dịch gần nhất đến thời điểm hiện tại
 def _time_since_last_sql(feature: FeatureDefinition) -> str:
     window = feature.window_hours
     return f"""
@@ -117,7 +117,7 @@ def _time_since_last_sql(feature: FeatureDefinition) -> str:
         END
         """
 
-
+# điều phối tính toán feature dựa trên aggregation
 def _feature_sql(feature: FeatureDefinition) -> str:
     if feature.aggregation in {"sum", "count"}:
         return _cumulative_feature_sql(feature)
@@ -125,7 +125,7 @@ def _feature_sql(feature: FeatureDefinition) -> str:
         return _time_since_last_sql(feature)
     raise ValueError(f"Unsupported aggregation: {feature.aggregation}")
 
-
+# tạo bảng kết quả cuối cùng
 def create_pit_features(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
