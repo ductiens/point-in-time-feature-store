@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 
 import duckdb
@@ -290,9 +289,7 @@ def print_summary(
     ).show()
 
 
-def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")
-
+def build_warehouse() -> Path:
     if not DATA_PATH.exists():
         raise FileNotFoundError(
             f"Không tìm thấy dataset: {DATA_PATH.resolve()}"
@@ -310,11 +307,4 @@ def main() -> None:
     finally:
         connection.close()
 
-    print(
-        f"\nOK: Đã tạo warehouse tại "
-        f"{DATABASE_PATH.resolve()}"
-    )
-
-
-if __name__ == "__main__":
-    main()
+    return DATABASE_PATH
