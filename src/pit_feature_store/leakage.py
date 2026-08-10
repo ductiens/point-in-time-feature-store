@@ -1,4 +1,3 @@
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,22 +7,21 @@ import pandas as pd
 from lightgbm import LGBMClassifier
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-from catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
-from offline_engine import DATABASE_PATH, build_offline_features
+from .catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
+from .offline_engine import DATABASE_PATH, build_offline_features
 
 
-METRICS_PATH = Path("reports/leakage_metrics.csv")
-REPORT_PATH = Path("reports/leakage_experiment.md")
 TRAIN_FRACTION = 0.8
 RANDOM_STATE = 42
 
 
 @dataclass(frozen=True)
 class ObservationBounds:
-    """Khoang cutoff duoc phep dung cho modeling.
+    """Valid cutoff range for modeling.
 
-    Leakage experiment can ca du du lieu 720 gio o ca qua khu va tuong lai.
-    Vi vay ta cat bo cac giao dich qua gan dau/cuoi dataset truoc khi split.
+    The leakage experiment needs a complete 720-hour window on both sides of
+    each cutoff, so rows too close to the beginning or end are excluded before
+    the temporal split.
     """
 
     start: pd.Timestamp
@@ -33,50 +31,28 @@ class ObservationBounds:
 
     @property
     def excluded_rows(self) -> int:
-        """So dong bi loai vi khong du observation window hai phia."""
-
         return self.total_rows - self.eligible_rows
 
 
 def feature_names(catalog: FeatureCatalog) -> list[str]:
-    """Lay dung danh sach ten feature tu catalog.
-    Dung catalog giup PIT va leaky khong bi lech ten cot hoac thu tu cot.
-    """
-
     return [feature.name for feature in catalog.features]
 
 
 def future_feature_name(feature: FeatureDefinition) -> str:
-    """Dat ten ro nghia cho cot future trong model PIT + future.
-    Bang leaky_features van giu ten theo spec. Rieng view kiem soat can ten
-    moi de nhin vao biet cot nao la thong tin tuong lai.
-    """
-
     if feature.aggregation == "time_since_last":
         return "time_to_next_txn_sec"
     return f"future_{feature.name}"
 
 
 def future_feature_names(catalog: FeatureCatalog) -> list[str]:
-    """Tao danh sach ten cot future ro nghia cho tat ca feature trong catalog."""
-
     return [future_feature_name(feature) for feature in catalog.features]
 
 
 def _upper_alias(window_hours: int) -> str:
-    """Tao alias SQL cho moc cutoff + window, vi du upper_24h."""
-
     return f"upper_{window_hours}h"
 
 
 def _future_feature_sql(feature: FeatureDefinition) -> str:
-    """Sinh bieu thuc SQL tinh mot feature bang du lieu tuong lai.
-
-    Sum/count lay khoang (cutoff, cutoff + window] bang cach lay cumulative
-    tai upper bound tru cumulative tai cutoff. Time feature lay so giay toi
-    event tuong lai gan nhat nam trong window.
-    """
-
     if feature.aggregation in {"sum", "count"}:
         cumulative_column = {
             "sum": "cumulative_amount",
@@ -113,11 +89,7 @@ def create_leaky_features(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
 ) -> None:
-    """Tao bang leaky_features co cung schema feature voi PIT.
-
-    Bang nay co chu dich sai point-in-time: moi feature nhin ve tuong lai.
-    Muc dich la tao doi chung de do anh huong cua data leakage.
-    """
+    """Create leaky_features with the same feature schema as pit_features."""
 
     cumulative_windows = sorted(
         {
@@ -179,12 +151,6 @@ def create_pit_plus_future_view(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
 ) -> None:
-    """Tao view gom 4 feature PIT cong 4 feature tuong lai.
-
-    Day la phep thu kiem soat chinh: model thu hai giu nguyen tin hieu qua
-    khu va chi duoc them thong tin tuong lai.
-    """
-
     pit_columns = ",\n".join(
         f"pit.{feature.name} AS {feature.name}"
         for feature in catalog.features
@@ -214,12 +180,6 @@ def build_leakage_datasets(
     connection: duckdb.DuckDBPyConnection,
     catalog_path: Path = CATALOG_PATH,
 ) -> FeatureCatalog:
-    """Chuan bi tat ca dataset can cho leakage experiment.
-
-    Ham nay rebuild PIT tu offline engine, sau do tao leaky_features va view
-    pit_plus_future_features tren cung mot label spine.
-    """
-
     catalog = load_catalog(catalog_path)
     build_offline_features(connection, catalog_path)
     create_leaky_features(connection, catalog)
@@ -231,13 +191,6 @@ def find_observation_bounds(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
 ) -> ObservationBounds:
-    """Tim vung cutoff co du lookback o ca hai phia.
-
-    Neu max window la 720 gio, cutoff hop le phai >= min(event_ts)+720h va
-    <= max(event_ts)-720h. Cach nay tranh viec future feature o cuoi dataset
-    bi cat cut mot cach nhan tao.
-    """
-
     lookback = catalog.max_lookback_hours
     row = connection.execute(
         f"""
@@ -281,13 +234,6 @@ def choose_split_timestamp(
     bounds: ObservationBounds,
     train_fraction: float = TRAIN_FRACTION,
 ) -> pd.Timestamp:
-    """Chon moc split theo thoi gian sau khi da loc observation bounds.
-
-    quantile_disc tra ve mot timestamp that trong du lieu. Train dung
-    cutoff < split_ts, test dung cutoff >= split_ts, nen cac dong cung
-    timestamp khong bi chia sang hai tap.
-    """
-
     if not 0 < train_fraction < 1:
         raise ValueError("train_fraction must be between 0 and 1.")
 
@@ -310,12 +256,6 @@ def load_feature_frame(
     columns: list[str],
     bounds: ObservationBounds,
 ) -> pd.DataFrame:
-    """Doc mot bang/view feature thanh DataFrame de dua vao LightGBM.
-
-    Ham chi cho phep cac bang da biet, loc dung observation bounds va kiem
-    tra so dong de dam bao ba dataset dung cung mot cohort.
-    """
-
     if table_name not in {
         "pit_features",
         "leaky_features",
@@ -345,12 +285,6 @@ def temporal_masks(
     frame: pd.DataFrame,
     split_ts: pd.Timestamp,
 ) -> tuple[pd.Series, pd.Series]:
-    """Tao mask train/test theo cutoff_ts.
-
-    Dau bang split_ts thuoc ve test set, giup moi giao dich cung timestamp
-    nam cung mot phia cua split.
-    """
-
     train_mask = frame["cutoff_ts"] < split_ts
     test_mask = frame["cutoff_ts"] >= split_ts
     if not train_mask.any() or not test_mask.any():
@@ -358,18 +292,14 @@ def temporal_masks(
     return train_mask, test_mask
 
 
-def train_and_evaluate(
+def train_score_and_evaluate(
     frame: pd.DataFrame,
     columns: list[str],
     split_ts: pd.Timestamp,
     dataset_name: str,
     bounds: ObservationBounds,
-) -> dict[str, Any]:
-    """Train mot LightGBM va tra ve metric/metadata cua dataset.
-
-    Khong fill NaN thu cong: LightGBM xu ly missing value noi bo. Ham nay
-    cung ghi fraud-rate cua test set lam baseline ngau nhien cho PR-AUC.
-    """
+) -> tuple[dict[str, Any], pd.DataFrame]:
+    """Train one LightGBM model and return metrics plus test predictions."""
 
     train_mask, test_mask = temporal_masks(frame, split_ts)
     train_labels = frame.loc[train_mask, "label"].astype(int)
@@ -391,7 +321,7 @@ def train_and_evaluate(
     test_fraud_rate = float(test_labels.mean())
     pr_auc = float(average_precision_score(test_labels, probabilities))
 
-    return {
+    metrics = {
         "dataset": dataset_name,
         "eligible_start": bounds.start.isoformat(sep=" "),
         "eligible_end": bounds.end.isoformat(sep=" "),
@@ -410,25 +340,119 @@ def train_and_evaluate(
         "pr_auc": pr_auc,
         "pr_auc_lift": pr_auc / test_fraud_rate,
     }
+    prediction_columns = [
+        column
+        for column in ["label_id", "cutoff_ts", "label"]
+        if column in frame.columns
+    ]
+    predictions = frame.loc[test_mask, prediction_columns].copy()
+    if "label_id" not in predictions.columns:
+        predictions.insert(0, "label_id", predictions.index)
+    predictions["dataset"] = dataset_name
+    predictions["score"] = probabilities
+    predictions = predictions[
+        ["dataset", "label_id", "cutoff_ts", "label", "score"]
+    ]
+    return metrics, predictions
 
 
-def write_reports(
+def train_and_evaluate(
+    frame: pd.DataFrame,
+    columns: list[str],
+    split_ts: pd.Timestamp,
+    dataset_name: str,
+    bounds: ObservationBounds,
+) -> dict[str, Any]:
+    metrics, _ = train_score_and_evaluate(
+        frame, columns, split_ts, dataset_name, bounds
+    )
+    return metrics
+
+
+def prepare_experiment_frames(
+    connection: duckdb.DuckDBPyConnection,
+    catalog_path: Path = CATALOG_PATH,
+) -> dict[str, Any]:
+    catalog = build_leakage_datasets(connection, catalog_path)
+    pit_columns = feature_names(catalog)
+    future_columns = future_feature_names(catalog)
+    augmented_columns = [*pit_columns, *future_columns]
+    bounds = find_observation_bounds(connection, catalog)
+    split_ts = choose_split_timestamp(connection, bounds)
+    frames = {
+        "pit": load_feature_frame(connection, "pit_features", pit_columns, bounds),
+        "future_only": load_feature_frame(
+            connection, "leaky_features", pit_columns, bounds
+        ),
+        "pit_plus_future": load_feature_frame(
+            connection,
+            "pit_plus_future_features",
+            augmented_columns,
+            bounds,
+        ),
+    }
+
+    metadata_columns = ["label_id", "uid", "cutoff_ts", "label"]
+    if not frames["pit"][metadata_columns].equals(
+        frames["future_only"][metadata_columns]
+    ) or not frames["pit"][metadata_columns].equals(
+        frames["pit_plus_future"][metadata_columns]
+    ):
+        raise ValueError("Leakage datasets do not share the same spine.")
+
+    return {
+        "catalog": catalog,
+        "bounds": bounds,
+        "split_ts": split_ts,
+        "pit_columns": pit_columns,
+        "future_columns": future_columns,
+        "augmented_columns": augmented_columns,
+        "frames": frames,
+    }
+
+
+def run_experiment(
+    database_path: Path = DATABASE_PATH,
+    catalog_path: Path = CATALOG_PATH,
+) -> dict[str, Any]:
+    connection = duckdb.connect(database_path.as_posix())
+    try:
+        prepared = prepare_experiment_frames(connection, catalog_path)
+        columns_by_dataset = {
+            "pit": prepared["pit_columns"],
+            "future_only": prepared["pit_columns"],
+            "pit_plus_future": prepared["augmented_columns"],
+        }
+        metric_rows = []
+        prediction_frames = []
+        for dataset_name in ["pit", "future_only", "pit_plus_future"]:
+            metrics, predictions = train_score_and_evaluate(
+                prepared["frames"][dataset_name],
+                columns_by_dataset[dataset_name],
+                prepared["split_ts"],
+                dataset_name,
+                prepared["bounds"],
+            )
+            metric_rows.append(metrics)
+            prediction_frames.append(predictions)
+    finally:
+        connection.close()
+
+    metrics_frame = pd.DataFrame(metric_rows)
+    predictions_frame = pd.concat(prediction_frames, ignore_index=True)
+    return {
+        "catalog": prepared["catalog"],
+        "metrics": metrics_frame,
+        "predictions": predictions_frame,
+        "markdown": render_report_markdown(metric_rows, prepared["catalog"]),
+    }
+
+
+def render_report_markdown(
     results: list[dict[str, Any]],
     catalog: FeatureCatalog,
-    metrics_path: Path = METRICS_PATH,
-    report_path: Path = REPORT_PATH,
-) -> None:
-    """Ghi ket qua ra CSV cho may doc va Markdown cho nguoi doc.
-
-    CSV giu day du metric/metadata. Markdown tom tat setup, baseline PR-AUC,
-    mapping ten future feature va hai phep so sanh: chinh va phu.
-    """
-
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+) -> str:
     metrics = pd.DataFrame(results)
-    metrics.to_csv(metrics_path, index=False, float_format="%.10f")
-
     indexed = metrics.set_index("dataset")
     pit = indexed.loc["pit"]
     future_only = indexed.loc["future_only"]
@@ -440,135 +464,50 @@ def write_reports(
 
     def comparison(delta: float) -> str:
         if delta > 0:
-            return "cao hơn"
+            return "higher"
         if delta < 0:
-            return "thấp hơn"
-        return "bằng"
+            return "lower"
+        return "equal"
 
     mapping_rows = "\n".join(
         f"| `{feature.name}` | `{future_feature_name(feature)}` | "
-        f"{'Thời gian tới event tương lai gần nhất' if feature.aggregation == 'time_since_last' else f'Giá trị trong (cutoff, cutoff + {feature.window_hours}h]'} |"
+        f"{'Seconds until the next future event' if feature.aggregation == 'time_since_last' else f'Value in (cutoff, cutoff + {feature.window_hours}h]'} |"
         for feature in catalog.features
     )
 
-    report = f"""# Leakage experiment
+    return f"""# Leakage experiment
 
-## Thiết lập
+## Setup
 
 - Model: LightGBM classifier, random state `{RANDOM_STATE}`.
-- Cohort hợp lệ: `{pit['eligible_start']}` đến `{pit['eligible_end']}` để mọi cutoff có đủ {catalog.max_lookback_hours} giờ ở cả hai phía.
-- Số dòng: {int(pit['eligible_rows'])} hợp lệ, loại {int(pit['excluded_rows'])} trên tổng {int(pit['total_rows'])}.
-- Split: 80/20 theo `cutoff_ts`; train `< {pit['split_ts']}`, test `>= {pit['split_ts']}`.
-- PIT dùng `[cutoff - window, cutoff)`; leaky dùng `(cutoff, cutoff + window]`.
+- Eligible cohort: `{pit['eligible_start']}` to `{pit['eligible_end']}`, so every cutoff has a complete {catalog.max_lookback_hours}-hour observation window on both sides.
+- Rows: {int(pit['eligible_rows'])} eligible, {int(pit['excluded_rows'])} excluded from {int(pit['total_rows'])} total.
+- Split: 80/20 by `cutoff_ts`; train `< {pit['split_ts']}`, test `>= {pit['split_ts']}`.
+- PIT uses `[cutoff - window, cutoff)`; leaky uses `(cutoff, cutoff + window]`.
 
-## Ngữ nghĩa future feature
+## Future Feature Semantics
 
-`future_only` giữ tên feature PIT để đáp ứng đặc tả. Trong phép thử kiểm soát, các cột tương lai được đổi tên rõ nghĩa:
+`future_only` keeps the PIT feature names to satisfy the spec. In the controlled comparison, future columns are renamed explicitly:
 
-| Tên theo spec | Tên trong PIT + future | Ngữ nghĩa future |
+| Spec name | PIT + future name | Future semantics |
 |---|---|---|
 {mapping_rows}
 
-## Kết quả
+## Results
 
-Tỷ lệ fraud trong test là `{pit['test_fraud_rate']:.6f}`, được dùng làm baseline ngẫu nhiên cho PR-AUC.
+The test fraud rate is `{pit['test_fraud_rate']:.6f}`, used as the random baseline for PR-AUC.
 
-| Dataset | Số feature | ROC-AUC | PR-AUC | PR-AUC lift |
+| Dataset | Features | ROC-AUC | PR-AUC | PR-AUC lift |
 |---|---:|---:|---:|---:|
 | PIT | {int(pit['feature_count'])} | {pit['roc_auc']:.6f} | {pit['pr_auc']:.6f} | {pit['pr_auc_lift']:.3f}x |
 | Future-only | {int(future_only['feature_count'])} | {future_only['roc_auc']:.6f} | {future_only['pr_auc']:.6f} | {future_only['pr_auc_lift']:.3f}x |
 | PIT + future | {int(augmented['feature_count'])} | {augmented['roc_auc']:.6f} | {augmented['pr_auc']:.6f} | {augmented['pr_auc_lift']:.3f}x |
 
-## Phân tích
+## Analysis
 
-Phép thử kiểm soát là so sánh `pit_plus_future` với `pit`: ROC-AUC {comparison(controlled_roc_delta)} {controlled_roc_delta:+.6f} và PR-AUC {comparison(controlled_pr_delta)} {controlled_pr_delta:+.6f}. Khác biệt duy nhất là model thứ hai nhận thêm future feature.
+The controlled comparison is `pit_plus_future` versus `pit`: ROC-AUC is {comparison(controlled_roc_delta)} by {controlled_roc_delta:+.6f}, and PR-AUC is {comparison(controlled_pr_delta)} by {controlled_pr_delta:+.6f}. The only difference is that the second model receives additional future features.
 
-Phép thử theo đặc tả là so sánh `future_only` với `pit`: ROC-AUC {comparison(spec_roc_delta)} {spec_roc_delta:+.6f} và PR-AUC {comparison(spec_pr_delta)} {spec_pr_delta:+.6f}. Phép thử này đồng thời thay tín hiệu quá khứ bằng tín hiệu tương lai nên chỉ được xem là kết quả phụ.
+The spec comparison is `future_only` versus `pit`: ROC-AUC is {comparison(spec_roc_delta)} by {spec_roc_delta:+.6f}, and PR-AUC is {comparison(spec_pr_delta)} by {spec_pr_delta:+.6f}. This comparison also replaces past signal with future signal, so it is a secondary view.
 
-Kết luận chỉ mô tả kết quả thực nghiệm; không giả định trước rằng thông tin tương lai luôn làm metric tăng.
+The conclusion describes the observed experiment only; it does not assume future information must improve the metric.
 """
-    report_path.write_text(report, encoding="utf-8")
-
-
-def run_experiment(
-    database_path: Path = DATABASE_PATH,
-    catalog_path: Path = CATALOG_PATH,
-    metrics_path: Path = METRICS_PATH,
-    report_path: Path = REPORT_PATH,
-) -> list[dict[str, Any]]:
-    """Chay tron ven leakage experiment tren warehouse DuckDB.
-
-    Thu tu: build dataset, loc cohort hop le, chon split, load 3 dataset,
-    kiem tra cung spine, train 3 model, ghi report va tra ket qua.
-    """
-
-    connection = duckdb.connect(database_path.as_posix())
-    try:
-        catalog = build_leakage_datasets(connection, catalog_path)
-        pit_columns = feature_names(catalog)
-        future_columns = future_feature_names(catalog)
-        augmented_columns = [*pit_columns, *future_columns]
-        bounds = find_observation_bounds(connection, catalog)
-        split_ts = choose_split_timestamp(connection, bounds)
-        pit_frame = load_feature_frame(
-            connection, "pit_features", pit_columns, bounds
-        )
-        future_frame = load_feature_frame(
-            connection, "leaky_features", pit_columns, bounds
-        )
-        augmented_frame = load_feature_frame(
-            connection,
-            "pit_plus_future_features",
-            augmented_columns,
-            bounds,
-        )
-
-        metadata_columns = ["label_id", "uid", "cutoff_ts", "label"]
-        if not pit_frame[metadata_columns].equals(
-            future_frame[metadata_columns]
-        ) or not pit_frame[metadata_columns].equals(
-            augmented_frame[metadata_columns]
-        ):
-            raise ValueError("Leakage datasets do not share the same spine.")
-
-        results = [
-            train_and_evaluate(
-                pit_frame, pit_columns, split_ts, "pit", bounds
-            ),
-            train_and_evaluate(
-                future_frame,
-                pit_columns,
-                split_ts,
-                "future_only",
-                bounds,
-            ),
-            train_and_evaluate(
-                augmented_frame,
-                augmented_columns,
-                split_ts,
-                "pit_plus_future",
-                bounds,
-            ),
-        ]
-    finally:
-        connection.close()
-
-    write_reports(results, catalog, metrics_path, report_path)
-    return results
-
-
-def main() -> None:
-    sys.stdout.reconfigure(encoding="utf-8")
-    results = run_experiment()
-    print(f"OK: Đã ghi metric tại {METRICS_PATH.resolve()}.")
-    for result in results:
-        print(
-            f"{result['dataset']}: "
-            f"ROC-AUC={result['roc_auc']:.6f}, "
-            f"PR-AUC={result['pr_auc']:.6f}"
-        )
-    print(f"Báo cáo phân tích: {REPORT_PATH.resolve()}.")
-
-
-if __name__ == "__main__":
-    main()

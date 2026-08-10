@@ -1,20 +1,9 @@
-import sys
-from pathlib import Path
-
 import duckdb
 import numpy as np
 import pandas as pd
 
-from pit_feature_store import catalog as catalog_module
-from pit_feature_store import offline_engine as offline_engine_module
 from pit_feature_store.catalog import CATALOG_PATH, FeatureCatalog, load_catalog
-from pit_feature_store.offline_engine import build_offline_features
-
-
-sys.modules.setdefault("catalog", catalog_module)
-sys.modules.setdefault("offline_engine", offline_engine_module)
-
-from leakage_experiment import (
+from pit_feature_store.leakage import (
     ObservationBounds,
     choose_split_timestamp,
     create_leaky_features,
@@ -23,10 +12,11 @@ from leakage_experiment import (
     find_observation_bounds,
     future_feature_names,
     load_feature_frame,
+    render_report_markdown,
     temporal_masks,
     train_and_evaluate,
-    write_reports,
 )
+from pit_feature_store.offline_engine import build_offline_features
 
 
 BASE_TS = pd.Timestamp("2020-01-10 12:00:00")
@@ -285,17 +275,12 @@ def test_three_models_share_split_and_report_pr_baseline() -> None:
     )
 
 
-def test_reports_contain_baseline_mapping_and_both_comparisons(
-    tmp_path: Path,
-) -> None:
+def test_report_markdown_contains_baseline_mapping_and_both_comparisons() -> None:
     catalog = load_catalog(CATALOG_PATH)
     results = model_results(catalog)
-    metrics_path = tmp_path / "leakage_metrics.csv"
-    report_path = tmp_path / "leakage_experiment.md"
-    write_reports(results, catalog, metrics_path, report_path)
 
-    metrics = pd.read_csv(metrics_path)
-    report = report_path.read_text(encoding="utf-8")
+    metrics = pd.DataFrame(results)
+    report = render_report_markdown(results, catalog)
     assert metrics["dataset"].tolist() == [
         "pit",
         "future_only",
@@ -308,7 +293,7 @@ def test_reports_contain_baseline_mapping_and_both_comparisons(
         "pr_auc_lift",
     }.issubset(metrics.columns)
     assert "time_to_next_txn_sec" in report
-    assert "baseline ngẫu nhiên" in report
-    assert "Phép thử kiểm soát" in report
-    assert "Phép thử theo đặc tả" in report
-    assert "không giả định trước" in report
+    assert "random baseline" in report
+    assert "controlled comparison" in report
+    assert "spec comparison" in report
+    assert "does not assume" in report

@@ -3,16 +3,11 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from evaluate_entity_candidates import (
-    CANDIDATES,
-    SELECTED_CANDIDATE,
-)
-
-
 DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
 IDENTITY_PATH = Path("data/raw/ieee/train_identity.csv")
 REPORT_PATH = Path("reports/entity_candidate_results.csv")
 WAREHOUSE_PATH = Path("warehouse.duckdb")
+SELECTED_CANDIDATE = "card1_card2_addr1"
 
 EXPECTED_ROWS = 590_540
 REQUIRED_SOURCE_COLUMNS = {
@@ -60,7 +55,7 @@ def test_dataset_exists_and_has_required_shape() -> None:
 def test_entity_report_has_required_candidates_and_selection() -> None:
     report = pd.read_csv(REPORT_PATH)
 
-    assert len(CANDIDATES) >= 3
+    assert len(report) >= 3
     assert REQUIRED_CANDIDATES <= set(report["candidate"])
     assert {
         "n_entities",
