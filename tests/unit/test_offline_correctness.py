@@ -102,10 +102,11 @@ def pandas_expected(rows: list[tuple]) -> pd.DataFrame:
     return pd.DataFrame(output).sort_values("label_id").reset_index(drop=True)
 
 
-def test_offline_objects_have_separated_responsibilities() -> None:
-    connection = create_connection(
-        [(1, "entity-a", BASE_TS, 10.0, 0)]
-    )
+def test_offline_objects_have_separated_responsibilities(
+    small_transactions_connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection = small_transactions_connection
+    build_offline_features(connection, CATALOG_PATH)
     try:
         for object_name, expected_columns in EXPECTED_OBJECT_COLUMNS.items():
             actual_columns = [
@@ -137,7 +138,7 @@ def test_offline_objects_have_separated_responsibilities() -> None:
             "pit_features": "BASE TABLE",
         }
     finally:
-        connection.close()
+        pass
 
 
 def test_duckdb_features_match_manual_pandas_calculation() -> None:
