@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from catalog import load_catalog, main
+from pit_feature_store.catalog import load_catalog, main
 
 
 EXPECTED_FEATURES = {

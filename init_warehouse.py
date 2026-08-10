@@ -55,8 +55,6 @@ def create_transactions_table(
     Tạo bảng transactions.
 
     Chỉ tạo UID khi card1, card2 và addr1 đều có dữ liệu.
-    Không dùng COALESCE(..., 'na') vì có thể gom nhiều dòng thiếu
-    dữ liệu thành một entity giả.
     """
 
     connection.sql(

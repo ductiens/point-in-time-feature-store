@@ -3,7 +3,7 @@ from pathlib import Path
 
 import duckdb
 
-from catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
+from .catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
 
 
 DATABASE_PATH = Path("warehouse.duckdb")

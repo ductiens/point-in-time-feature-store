@@ -4,8 +4,8 @@ import duckdb
 import pandas as pd
 import pandas.testing as pdt
 
-from catalog import load_catalog
-from offline_engine import build_offline_features
+from pit_feature_store.catalog import CATALOG_PATH, load_catalog
+from pit_feature_store.offline_engine import build_offline_features
 
 
 BASE_TS = pd.Timestamp("2020-01-10 12:00:00")
@@ -50,7 +50,7 @@ def create_connection(rows: list[tuple]) -> duckdb.DuckDBPyConnection:
         "INSERT INTO transactions VALUES (?, ?, ?, ?, ?)",
         rows,
     )
-    build_offline_features(connection, Path("feature_catalog.yaml"))
+    build_offline_features(connection, CATALOG_PATH)
     return connection
 
 
@@ -182,7 +182,7 @@ def test_pipeline_is_safe_to_run_again() -> None:
         first = connection.sql(
             "SELECT * FROM pit_features ORDER BY label_id"
         ).df()
-        build_offline_features(connection, Path("feature_catalog.yaml"))
+        build_offline_features(connection, CATALOG_PATH)
         second = connection.sql(
             "SELECT * FROM pit_features ORDER BY label_id"
         ).df()

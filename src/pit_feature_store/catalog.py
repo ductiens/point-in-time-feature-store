@@ -11,7 +11,7 @@ from pydantic import (
 )
 
 
-CATALOG_PATH = Path("feature_catalog.yaml")
+CATALOG_PATH = Path("config/feature_catalog.yaml")
 Aggregation = Literal["sum", "count", "time_since_last"]
 SourceColumn = Literal["amount", "transaction_id", "event_ts"]
 Entity = Literal["uid"]

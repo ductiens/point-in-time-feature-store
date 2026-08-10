@@ -1,10 +1,19 @@
+import sys
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-from catalog import FeatureCatalog, load_catalog
+from pit_feature_store import catalog as catalog_module
+from pit_feature_store import offline_engine as offline_engine_module
+from pit_feature_store.catalog import CATALOG_PATH, FeatureCatalog, load_catalog
+from pit_feature_store.offline_engine import build_offline_features
+
+
+sys.modules.setdefault("catalog", catalog_module)
+sys.modules.setdefault("offline_engine", offline_engine_module)
+
 from leakage_experiment import (
     ObservationBounds,
     choose_split_timestamp,
@@ -18,11 +27,9 @@ from leakage_experiment import (
     train_and_evaluate,
     write_reports,
 )
-from offline_engine import build_offline_features
 
 
 BASE_TS = pd.Timestamp("2020-01-10 12:00:00")
-CATALOG_PATH = Path("feature_catalog.yaml")
 
 
 def leakage_connection(rows: list[tuple]) -> duckdb.DuckDBPyConnection:
