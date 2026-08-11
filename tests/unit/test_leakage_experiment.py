@@ -1,8 +1,7 @@
 import duckdb
-import numpy as np
 import pandas as pd
 
-from pit_feature_store.catalog import CATALOG_PATH, FeatureCatalog, load_catalog
+from pit_feature_store.catalog import CATALOG_PATH, load_catalog
 from pit_feature_store.leakage import (
     ObservationBounds,
     choose_split_timestamp,
@@ -12,9 +11,8 @@ from pit_feature_store.leakage import (
     find_observation_bounds,
     future_feature_names,
     load_feature_frame,
-    render_report_markdown,
+    prepare_experiment_frames,
     temporal_masks,
-    train_and_evaluate,
 )
 from pit_feature_store.offline_engine import build_offline_features
 
@@ -205,95 +203,41 @@ def test_temporal_split_is_after_filter_and_keeps_equal_timestamps() -> None:
     )
 
 
-def model_frame(offset: float) -> pd.DataFrame:
-    row_count = 100
-    labels = np.arange(row_count) % 2
-    return pd.DataFrame(
-        {
-            "cutoff_ts": pd.date_range("2020-01-01", periods=row_count, freq="h"),
-            "label": labels,
-            "sum_amt_24h": labels + offset,
-            "count_txn_24h": np.arange(row_count) % 5,
-            "sum_amt_7d": np.arange(row_count, dtype=float),
-            "time_since_last_txn_sec": np.where(
-                np.arange(row_count) % 7 == 0,
-                np.nan,
-                3600.0,
-            ),
-        }
-    )
-
-
-def model_results(catalog: FeatureCatalog) -> list[dict]:
-    pit_columns = feature_names(catalog)
-    semantic_future_columns = future_feature_names(catalog)
-    pit = model_frame(0.0)
-    future = model_frame(1.0)
-    augmented = pit.copy()
-    for old_name, new_name in zip(pit_columns, semantic_future_columns):
-        augmented[new_name] = future[old_name]
-
-    bounds = ObservationBounds(
-        start=pit["cutoff_ts"].min(),
-        end=pit["cutoff_ts"].max(),
-        total_rows=len(pit),
-        eligible_rows=len(pit),
-    )
-    split_ts = pd.Timestamp("2020-01-04 08:00:00")
-    return [
-        train_and_evaluate(pit, pit_columns, split_ts, "pit", bounds),
-        train_and_evaluate(
-            future, pit_columns, split_ts, "future_only", bounds
-        ),
-        train_and_evaluate(
-            augmented,
-            [*pit_columns, *semantic_future_columns],
-            split_ts,
-            "pit_plus_future",
-            bounds,
-        ),
+def test_prepare_experiment_frames_returns_aligned_engineering_datasets() -> None:
+    event_hours = [0, 720, 800, 900, 1000, 1100, 1200, 1300, 1440, 2160]
+    rows = [
+        (
+            index,
+            "entity-a",
+            BASE_TS + pd.Timedelta(hours=event_hour),
+            float(index),
+            index % 2,
+        )
+        for index, event_hour in enumerate(event_hours, start=1)
     ]
+    connection = leakage_connection(rows)
+    try:
+        prepared = prepare_experiment_frames(
+            connection,
+            CATALOG_PATH,
+            train_fraction=0.5,
+        )
+    finally:
+        connection.close()
 
-
-def test_three_models_share_split_and_report_pr_baseline() -> None:
-    catalog = load_catalog(CATALOG_PATH)
-    results = model_results(catalog)
-
-    assert [result["dataset"] for result in results] == [
-        "pit",
-        "future_only",
-        "pit_plus_future",
-    ]
-    assert all(result["train_rows"] == 80 for result in results)
-    assert all(result["test_rows"] == 20 for result in results)
-    assert all(result["test_fraud_rate"] == 0.5 for result in results)
-    assert all(0.0 <= result["roc_auc"] <= 1.0 for result in results)
-    assert all(0.0 <= result["pr_auc"] <= 1.0 for result in results)
-    assert all(
-        result["pr_auc_lift"] == result["pr_auc"] / 0.5
-        for result in results
+    frames = prepared["frames"]
+    metadata_columns = ["label_id", "uid", "cutoff_ts", "label"]
+    assert prepared["bounds"].eligible_rows == 8
+    assert frames["pit"][metadata_columns].equals(
+        frames["future_only"][metadata_columns]
     )
-
-
-def test_report_markdown_contains_baseline_mapping_and_both_comparisons() -> None:
-    catalog = load_catalog(CATALOG_PATH)
-    results = model_results(catalog)
-
-    metrics = pd.DataFrame(results)
-    report = render_report_markdown(results, catalog)
-    assert metrics["dataset"].tolist() == [
-        "pit",
-        "future_only",
-        "pit_plus_future",
-    ]
-    assert {
-        "eligible_start",
-        "eligible_end",
-        "test_fraud_rate",
-        "pr_auc_lift",
-    }.issubset(metrics.columns)
-    assert "time_to_next_txn_sec" in report
-    assert "random baseline" in report
-    assert "controlled comparison" in report
-    assert "spec comparison" in report
-    assert "does not assume" in report
+    assert frames["pit"][metadata_columns].equals(
+        frames["pit_plus_future"][metadata_columns]
+    )
+    assert prepared["pit_columns"] == feature_names(load_catalog(CATALOG_PATH))
+    assert prepared["future_columns"] == future_feature_names(
+        load_catalog(CATALOG_PATH)
+    )
+    train_mask, test_mask = temporal_masks(frames["pit"], prepared["split_ts"])
+    assert train_mask.any()
+    assert test_mask.any()

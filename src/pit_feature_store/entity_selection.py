@@ -9,10 +9,6 @@ import pandas as pd
 DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
 OUTPUT_PATH = Path("artifacts/reports/entity_candidate_results.csv")
 
-MIN_REPEAT_ENTITY_PCT = 50.0
-MIN_REPEAT_ROW_PCT = 95.0
-MIN_MEDIAN_TXN_PER_ENTITY = 2.0
-
 
 @dataclass(frozen=True)
 class EntityCandidate:
@@ -50,8 +46,6 @@ REPORT_COLUMNS = [
     "median_txn_per_entity",
     "p95_txn_per_entity",
     "max_txn_per_entity",
-    "selected",
-    "selection_reason",
 ]
 
 
@@ -189,48 +183,6 @@ def evaluate_candidate(
     }
 
 
-def select_candidate(results: pd.DataFrame) -> tuple[str, str]:
-    required_names = {
-        candidate.name for candidate in CANDIDATES if candidate.required
-    }
-    eligible = results[
-        results["candidate"].isin(required_names)
-        & (results["repeat_entity_pct"] >= MIN_REPEAT_ENTITY_PCT)
-        & (results["repeat_row_pct"] >= MIN_REPEAT_ROW_PCT)
-        & (
-            results["median_txn_per_entity"]
-            >= MIN_MEDIAN_TXN_PER_ENTITY
-        )
-    ].copy()
-
-    if eligible.empty:
-        raise ValueError(
-            "Không có candidate bắt buộc nào đạt ngưỡng lịch sử để "
-            "tạo rolling feature."
-        )
-
-    candidate_sizes = {
-        candidate.name: len(candidate.columns)
-        for candidate in CANDIDATES
-    }
-    eligible["column_count"] = eligible["candidate"].map(
-        candidate_sizes
-    )
-    selected = eligible.sort_values(
-        by=["column_count", "coverage_pct", "repeat_entity_pct"],
-        ascending=[False, False, False],
-    ).iloc[0]
-
-    reason = (
-        "Candidate bắt buộc chi tiết nhất vẫn đạt ngưỡng chống phân mảnh: "
-        f"coverage {selected['coverage_pct']:.2f}%, "
-        f"repeat entity {selected['repeat_entity_pct']:.2f}%, "
-        f"repeat row {selected['repeat_row_pct']:.2f}% và median "
-        f"{selected['median_txn_per_entity']:.1f} giao dịch/entity."
-    )
-    return str(selected["candidate"]), reason
-
-
 def generate_entity_candidate_results(
     data_path: Path = DATA_PATH,
 ) -> pd.DataFrame:
@@ -249,24 +201,22 @@ def generate_entity_candidate_results(
     finally:
         connection.close()
 
-    selected_name, selection_reason = select_candidate(results)
-    results["selected"] = results["candidate"].eq(selected_name)
-    results["selection_reason"] = None
-    results.loc[
-        results["selected"], "selection_reason"
-    ] = selection_reason
-
     return results.sort_values(
         by=["repeat_entity_pct", "coverage_pct"],
         ascending=False,
     ).reset_index(drop=True)[REPORT_COLUMNS]
 
 
-def run_entity_selection(
-    data_path: Path = DATA_PATH,
+def export_entity_candidate_results(
+    results: pd.DataFrame,
     output_path: Path = OUTPUT_PATH,
-) -> pd.DataFrame:
-    results = generate_entity_candidate_results(data_path)
+) -> Path:
+    missing_columns = set(REPORT_COLUMNS) - set(results.columns)
+    if missing_columns:
+        missing_text = ", ".join(sorted(missing_columns))
+        raise ValueError(
+            f"Entity report thiếu các cột metrics: {missing_text}"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     results.to_csv(output_path, index=False)
-    return results
+    return output_path

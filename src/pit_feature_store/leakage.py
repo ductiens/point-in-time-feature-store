@@ -1,18 +1,21 @@
+"""Reusable PIT/future dataset preparation for the leakage experiment.
+
+This module owns SQL feature generation, observation bounds, temporal splitting,
+and aligned feature-frame loading. Model fitting, evaluation, comparison, and
+research reporting live directly in ``notebooks/02_leakage_experiment.ipynb``.
+"""
+
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import duckdb
 import pandas as pd
-from lightgbm import LGBMClassifier
-from sklearn.metrics import average_precision_score, roc_auc_score
 
 from .catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
-from .offline_engine import DATABASE_PATH, build_offline_features
+from .offline_engine import build_offline_features
 
 
 TRAIN_FRACTION = 0.8
-RANDOM_STATE = 42
 
 
 @dataclass(frozen=True)
@@ -292,93 +295,17 @@ def temporal_masks(
     return train_mask, test_mask
 
 
-def train_score_and_evaluate(
-    frame: pd.DataFrame,
-    columns: list[str],
-    split_ts: pd.Timestamp,
-    dataset_name: str,
-    bounds: ObservationBounds,
-) -> tuple[dict[str, Any], pd.DataFrame]:
-    """Train one LightGBM model and return metrics plus test predictions."""
-
-    train_mask, test_mask = temporal_masks(frame, split_ts)
-    train_labels = frame.loc[train_mask, "label"].astype(int)
-    test_labels = frame.loc[test_mask, "label"].astype(int)
-    if train_labels.nunique() < 2 or test_labels.nunique() < 2:
-        raise ValueError("Both temporal partitions must contain both label classes.")
-
-    model = LGBMClassifier(
-        objective="binary",
-        n_estimators=100,
-        random_state=RANDOM_STATE,
-        n_jobs=-1,
-        deterministic=True,
-        force_col_wise=True,
-        verbosity=-1,
-    )
-    model.fit(frame.loc[train_mask, columns], train_labels)
-    probabilities = model.predict_proba(frame.loc[test_mask, columns])[:, 1]
-    test_fraud_rate = float(test_labels.mean())
-    pr_auc = float(average_precision_score(test_labels, probabilities))
-
-    metrics = {
-        "dataset": dataset_name,
-        "eligible_start": bounds.start.isoformat(sep=" "),
-        "eligible_end": bounds.end.isoformat(sep=" "),
-        "total_rows": bounds.total_rows,
-        "eligible_rows": bounds.eligible_rows,
-        "excluded_rows": bounds.excluded_rows,
-        "split_ts": split_ts.isoformat(sep=" "),
-        "train_rows": int(train_mask.sum()),
-        "test_rows": int(test_mask.sum()),
-        "train_positive": int(train_labels.sum()),
-        "test_positive": int(test_labels.sum()),
-        "test_fraud_rate": test_fraud_rate,
-        "feature_count": len(columns),
-        "feature_columns": "|".join(columns),
-        "roc_auc": float(roc_auc_score(test_labels, probabilities)),
-        "pr_auc": pr_auc,
-        "pr_auc_lift": pr_auc / test_fraud_rate,
-    }
-    prediction_columns = [
-        column
-        for column in ["label_id", "cutoff_ts", "label"]
-        if column in frame.columns
-    ]
-    predictions = frame.loc[test_mask, prediction_columns].copy()
-    if "label_id" not in predictions.columns:
-        predictions.insert(0, "label_id", predictions.index)
-    predictions["dataset"] = dataset_name
-    predictions["score"] = probabilities
-    predictions = predictions[
-        ["dataset", "label_id", "cutoff_ts", "label", "score"]
-    ]
-    return metrics, predictions
-
-
-def train_and_evaluate(
-    frame: pd.DataFrame,
-    columns: list[str],
-    split_ts: pd.Timestamp,
-    dataset_name: str,
-    bounds: ObservationBounds,
-) -> dict[str, Any]:
-    metrics, _ = train_score_and_evaluate(
-        frame, columns, split_ts, dataset_name, bounds
-    )
-    return metrics
-
-
 def prepare_experiment_frames(
     connection: duckdb.DuckDBPyConnection,
     catalog_path: Path = CATALOG_PATH,
-) -> dict[str, Any]:
+    train_fraction: float = TRAIN_FRACTION,
+) -> dict[str, object]:
     catalog = build_leakage_datasets(connection, catalog_path)
     pit_columns = feature_names(catalog)
     future_columns = future_feature_names(catalog)
     augmented_columns = [*pit_columns, *future_columns]
     bounds = find_observation_bounds(connection, catalog)
-    split_ts = choose_split_timestamp(connection, bounds)
+    split_ts = choose_split_timestamp(connection, bounds, train_fraction)
     frames = {
         "pit": load_feature_frame(connection, "pit_features", pit_columns, bounds),
         "future_only": load_feature_frame(
@@ -409,105 +336,3 @@ def prepare_experiment_frames(
         "augmented_columns": augmented_columns,
         "frames": frames,
     }
-
-
-def run_experiment(
-    database_path: Path = DATABASE_PATH,
-    catalog_path: Path = CATALOG_PATH,
-) -> dict[str, Any]:
-    connection = duckdb.connect(database_path.as_posix())
-    try:
-        prepared = prepare_experiment_frames(connection, catalog_path)
-        columns_by_dataset = {
-            "pit": prepared["pit_columns"],
-            "future_only": prepared["pit_columns"],
-            "pit_plus_future": prepared["augmented_columns"],
-        }
-        metric_rows = []
-        prediction_frames = []
-        for dataset_name in ["pit", "future_only", "pit_plus_future"]:
-            metrics, predictions = train_score_and_evaluate(
-                prepared["frames"][dataset_name],
-                columns_by_dataset[dataset_name],
-                prepared["split_ts"],
-                dataset_name,
-                prepared["bounds"],
-            )
-            metric_rows.append(metrics)
-            prediction_frames.append(predictions)
-    finally:
-        connection.close()
-
-    metrics_frame = pd.DataFrame(metric_rows)
-    predictions_frame = pd.concat(prediction_frames, ignore_index=True)
-    return {
-        "catalog": prepared["catalog"],
-        "metrics": metrics_frame,
-        "predictions": predictions_frame,
-        "markdown": render_report_markdown(metric_rows, prepared["catalog"]),
-    }
-
-
-def render_report_markdown(
-    results: list[dict[str, Any]],
-    catalog: FeatureCatalog,
-) -> str:
-    metrics = pd.DataFrame(results)
-    indexed = metrics.set_index("dataset")
-    pit = indexed.loc["pit"]
-    future_only = indexed.loc["future_only"]
-    augmented = indexed.loc["pit_plus_future"]
-    controlled_roc_delta = float(augmented["roc_auc"] - pit["roc_auc"])
-    controlled_pr_delta = float(augmented["pr_auc"] - pit["pr_auc"])
-    spec_roc_delta = float(future_only["roc_auc"] - pit["roc_auc"])
-    spec_pr_delta = float(future_only["pr_auc"] - pit["pr_auc"])
-
-    def comparison(delta: float) -> str:
-        if delta > 0:
-            return "higher"
-        if delta < 0:
-            return "lower"
-        return "equal"
-
-    mapping_rows = "\n".join(
-        f"| `{feature.name}` | `{future_feature_name(feature)}` | "
-        f"{'Seconds until the next future event' if feature.aggregation == 'time_since_last' else f'Value in (cutoff, cutoff + {feature.window_hours}h]'} |"
-        for feature in catalog.features
-    )
-
-    return f"""# Leakage experiment
-
-## Setup
-
-- Model: LightGBM classifier, random state `{RANDOM_STATE}`.
-- Eligible cohort: `{pit['eligible_start']}` to `{pit['eligible_end']}`, so every cutoff has a complete {catalog.max_lookback_hours}-hour observation window on both sides.
-- Rows: {int(pit['eligible_rows'])} eligible, {int(pit['excluded_rows'])} excluded from {int(pit['total_rows'])} total.
-- Split: 80/20 by `cutoff_ts`; train `< {pit['split_ts']}`, test `>= {pit['split_ts']}`.
-- PIT uses `[cutoff - window, cutoff)`; leaky uses `(cutoff, cutoff + window]`.
-
-## Future Feature Semantics
-
-`future_only` keeps the PIT feature names to satisfy the spec. In the controlled comparison, future columns are renamed explicitly:
-
-| Spec name | PIT + future name | Future semantics |
-|---|---|---|
-{mapping_rows}
-
-## Results
-
-The test fraud rate is `{pit['test_fraud_rate']:.6f}`, used as the random baseline for PR-AUC.
-
-| Dataset | Features | ROC-AUC | PR-AUC | PR-AUC lift |
-|---|---:|---:|---:|---:|
-| PIT | {int(pit['feature_count'])} | {pit['roc_auc']:.6f} | {pit['pr_auc']:.6f} | {pit['pr_auc_lift']:.3f}x |
-| Future-only | {int(future_only['feature_count'])} | {future_only['roc_auc']:.6f} | {future_only['pr_auc']:.6f} | {future_only['pr_auc_lift']:.3f}x |
-| PIT + future | {int(augmented['feature_count'])} | {augmented['roc_auc']:.6f} | {augmented['pr_auc']:.6f} | {augmented['pr_auc_lift']:.3f}x |
-
-## Analysis
-
-The controlled comparison is `pit_plus_future` versus `pit`: ROC-AUC is {comparison(controlled_roc_delta)} by {controlled_roc_delta:+.6f}, and PR-AUC is {comparison(controlled_pr_delta)} by {controlled_pr_delta:+.6f}. The only difference is that the second model receives additional future features.
-
-The spec comparison is `future_only` versus `pit`: ROC-AUC is {comparison(spec_roc_delta)} by {spec_roc_delta:+.6f}, and PR-AUC is {comparison(spec_pr_delta)} by {spec_pr_delta:+.6f}. This comparison also replaces past signal with future signal, so it is a secondary view.
-
-The conclusion describes the observed experiment only; it does not assume future information must improve the metric.
-"""

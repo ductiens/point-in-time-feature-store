@@ -3,7 +3,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from pit_feature_store.entity_selection import run_entity_selection
+from pit_feature_store.entity_selection import (
+    export_entity_candidate_results,
+    generate_entity_candidate_results,
+)
 
 
 def write_source(tmp_path: Path, frame: pd.DataFrame) -> Path:
@@ -12,7 +15,7 @@ def write_source(tmp_path: Path, frame: pd.DataFrame) -> Path:
     return source_path
 
 
-def test_run_entity_selection_calculates_from_raw_and_writes_report(
+def test_generate_entity_selection_metrics_from_raw_and_export_report(
     tmp_path: Path,
 ) -> None:
     source_path = write_source(
@@ -29,13 +32,14 @@ def test_run_entity_selection_calculates_from_raw_and_writes_report(
     )
     output_path = tmp_path / "reports" / "entity_candidates.csv"
 
-    results = run_entity_selection(source_path, output_path)
+    results = generate_entity_candidate_results(source_path)
+    exported_path = export_entity_candidate_results(results, output_path)
 
-    assert output_path.exists()
+    assert exported_path == output_path
+    assert exported_path.exists()
     assert len(results) == 4
-    assert results.loc[results["selected"], "candidate"].tolist() == [
-        "card1_card2_addr1"
-    ]
+    assert "selected" not in results.columns
+    assert "selection_reason" not in results.columns
     fragmented = results.loc[
         results["candidate"] == "card1_card2_addr1_D1"
     ].iloc[0]
@@ -43,20 +47,10 @@ def test_run_entity_selection_calculates_from_raw_and_writes_report(
     assert fragmented["median_txn_per_entity"] == 1.0
 
     exported = pd.read_csv(output_path)
-    pd.testing.assert_frame_equal(
-        exported.drop(columns="selection_reason"),
-        results.drop(columns="selection_reason"),
-        check_dtype=False,
-    )
-    assert exported.loc[
-        exported["selected"], "selection_reason"
-    ].str.strip().ne("").all()
-    assert exported.loc[
-        ~exported["selected"], "selection_reason"
-    ].isna().all()
+    pd.testing.assert_frame_equal(exported, results, check_dtype=False)
 
 
-def test_run_entity_selection_rejects_missing_candidate_columns(
+def test_generate_entity_selection_rejects_missing_candidate_columns(
     tmp_path: Path,
 ) -> None:
     source_path = write_source(
@@ -68,4 +62,4 @@ def test_run_entity_selection_rejects_missing_candidate_columns(
         ValueError,
         match="Dataset thiếu các cột đánh giá entity",
     ):
-        run_entity_selection(source_path, tmp_path / "report.csv")
+        generate_entity_candidate_results(source_path)

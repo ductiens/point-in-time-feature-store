@@ -11,23 +11,29 @@ Feature store tối giản cho bộ dữ liệu [IEEE-CIS Fraud Detection](https
 - So sánh PIT-correct feature với future-looking feature bằng temporal split.
 - Kiểm chứng các biên thời gian và kết quả tính toán bằng test tự động.
 
-## Kiến trúc hiện tại
+## Workflow
 
-```mermaid
-flowchart LR
-    A[IEEE-CIS raw CSV] --> B[Đánh giá pseudo-entity]
-    A --> C[DuckDB transactions]
-    D[Feature catalog YAML] --> E[Offline PIT engine]
-    C --> E
-    E --> F[pit_features]
-    F --> G[Leakage experiment]
-    C -. Giai đoạn sau .-> H[Backfill]
-    D -. Giai đoạn sau .-> H
-    C -. Giai đoạn sau .-> I[Redis online engine]
-    D -. Giai đoạn sau .-> I
-    F -. Giai đoạn sau .-> J[Offline-online parity]
-    I -. Giai đoạn sau .-> J
+```text
+Raw data
+    ↓
+01_eda_and_entity_selection.ipynb
+    ↓
+Warehouse
+    ↓
+Feature catalog
+    ↓
+Offline PIT features
+    ↓
+02_leakage_experiment.ipynb
+    ↓
+Backfill — next stage
 ```
+
+Hai notebook là nơi trình bày EDA, visualization, research reasoning, baseline,
+model comparison và evaluation. `src/pit_feature_store/` giữ logic dữ liệu có thể
+tái sử dụng như validation, warehouse, catalog, PIT/future feature calculation và
+chuẩn bị modeling dataset; `leakage.py` không chứa code train/evaluate model hoặc
+research report.
 
 Pseudo-entity đang dùng là `card1 + card2 + addr1`, được chọn từ kết quả thực nghiệm: độ phủ 87,45%, 60,49% entity có từ hai giao dịch và 97,15% dòng có UID thuộc entity lặp lại.
 
@@ -102,15 +108,16 @@ Dữ liệu raw được Git ignore và không được commit. Warehouse yêu c
 
 Các lệnh dưới đây phải chạy từ thư mục gốc repository và theo đúng thứ tự.
 
-### 1. Đánh giá pseudo-entity
+### 1. Chạy EDA và chọn pseudo-entity
 
 ```powershell
 python -m jupyter nbconvert --to notebook --execute notebooks/01_eda_and_entity_selection.ipynb --output-dir artifacts/reports --output 01_eda_and_entity_selection.executed.ipynb --ExecutePreprocessor.timeout=900
 ```
 
-Notebook import logic từ `pit_feature_store.entity_selection`, quét trực tiếp
-`train_transaction.csv`, chọn candidate và tạo
-`artifacts/reports/entity_candidate_results.csv`.
+Notebook quét trực tiếp `train_transaction.csv`, trình bày statistics, missing/data
+quality, fraud label, amount/temporal visualization và reasoning chọn UID. Module
+`pit_feature_store.entity_selection` chỉ tính metrics dùng chung; notebook quyết
+định candidate và tạo `artifacts/reports/entity_candidate_results.csv`.
 
 ### 2. Khởi tạo DuckDB warehouse
 
@@ -152,7 +159,8 @@ Offline engine tạo trong DuckDB:
 python -m jupyter nbconvert --to notebook --execute notebooks/02_leakage_experiment.ipynb --output-dir artifacts/reports --output 02_leakage_experiment.executed.ipynb --ExecutePreprocessor.timeout=900
 ```
 
-Notebook dùng temporal split, không random split, và ghi:
+Notebook hiển thị feature distributions, temporal split, Dummy baseline và code
+train/evaluate trực tiếp cho PIT, future-only, PIT + future LightGBM. Notebook ghi:
 
 - `artifacts/reports/leakage_metrics.csv`
 - `artifacts/reports/leakage_experiment.md`
@@ -160,8 +168,9 @@ Notebook dùng temporal split, không random split, và ghi:
 
 Kết quả đã xác minh trên môi trường dự án:
 
-| Dataset      |  ROC-AUC |   PR-AUC |
+| Model        |  ROC-AUC |   PR-AUC |
 | ------------ | -------: | -------: |
+| Dummy prior  | 0,500000 | 0,034077 |
 | PIT          | 0,679783 | 0,067894 |
 | Future-only  | 0,674214 | 0,064931 |
 | PIT + future | 0,705485 | 0,074536 |
