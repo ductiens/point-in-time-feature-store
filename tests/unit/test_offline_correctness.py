@@ -193,6 +193,48 @@ def test_pipeline_is_safe_to_run_again() -> None:
     pdt.assert_frame_equal(first, second)
 
 
+def test_temporary_mode_uses_only_temporary_feature_objects(
+    small_transactions_connection: duckdb.DuckDBPyConnection,
+) -> None:
+    connection = small_transactions_connection
+    connection.execute(
+        """
+        CREATE TEMP VIEW backfill_transactions AS
+        SELECT * FROM transactions
+        """
+    )
+    build_offline_features(
+        connection,
+        CATALOG_PATH,
+        source_relation="backfill_transactions",
+        temporary=True,
+    )
+
+    temporary_flags = dict(
+        connection.sql(
+            """
+            SELECT table_name, temporary
+            FROM duckdb_tables()
+            WHERE table_name = 'pit_features'
+            UNION ALL
+            SELECT view_name, temporary
+            FROM duckdb_views()
+            WHERE view_name IN (
+                'label_spine',
+                'feature_events',
+                'feature_cumsum'
+            )
+            """
+        ).fetchall()
+    )
+    assert temporary_flags == {
+        "pit_features": True,
+        "label_spine": True,
+        "feature_events": True,
+        "feature_cumsum": True,
+    }
+
+
 def test_catalog_drives_output_feature_names(tmp_path: Path) -> None:
     catalog_path = tmp_path / "feature_catalog.yaml"
     catalog_path.write_text(

@@ -2,7 +2,7 @@
 
 Feature store tối giản cho bộ dữ liệu [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection), tập trung vào tính đúng tại thời điểm dự đoán (point-in-time correctness). Dự án dùng DuckDB cho offline store và chứng minh rolling feature không sử dụng giao dịch hiện tại hoặc dữ liệu tương lai.
 
-> Trạng thái hiện tại: warehouse, feature catalog, offline engine và leakage experiment đã hoàn thành. Backfill, Redis/FastAPI online engine, offline-online parity và monitoring chưa được triển khai.
+> Trạng thái hiện tại: warehouse, feature catalog, offline engine, leakage experiment và backfill đã hoàn thành. Redis/FastAPI online engine, offline-online parity và monitoring chưa được triển khai.
 
 ## Mục tiêu
 
@@ -26,7 +26,7 @@ Offline PIT features
     ↓
 02_leakage_experiment.ipynb
     ↓
-Backfill — next stage
+Backfill
 ```
 
 Hai notebook là nơi trình bày EDA, visualization, research reasoning, baseline,
@@ -177,6 +177,22 @@ Kết quả đã xác minh trên môi trường dự án:
 
 Future-only không mặc định tốt hơn PIT; kết luận leakage dựa trên số liệu thực nghiệm. Phép so sánh kiểm soát `PIT + future` cao hơn PIT ở lần chạy đã xác minh.
 
+### 5. Chạy backfill
+
+```powershell
+python scripts/run_backfill.py --start-date 2018-01-01 --end-date 2018-01-01
+```
+
+Khoảng ngày bao gồm cả `start-date` và `end-date`. Backfill tự lấy lookback lớn
+nhất từ catalog, dùng TEMP objects và ghi kết quả an toàn tại:
+
+```text
+artifacts/offline_store/backfill/version=<catalog-version>-<fingerprint>/<start>_<end>/features.parquet
+```
+
+Catalog snapshot nằm cạnh Parquet; log mỗi lần chạy nằm tại
+`artifacts/logs/backfill_log.jsonl`.
+
 ## Chạy test
 
 Unit test không cần dataset Kaggle hoặc service ngoài:
@@ -191,7 +207,9 @@ Toàn bộ test:
 python -m pytest tests -v
 ```
 
-Integration test yêu cầu hai CSV raw, báo cáo pseudo-entity và `artifacts/warehouse.duckdb` đã được tạo theo workflow phía trên. Test hiện tại bao phủ catalog validation, tính offline so với Pandas, biên thời gian, tách entity, temporal split và cấu trúc warehouse.
+Integration test Stage 1 yêu cầu raw data và warehouse thật; các test backfill dùng
+warehouse nhỏ tự tạo. Test hiện tại bao phủ catalog validation, PIT boundaries,
+temporal split, backfill idempotency và backfill/full-pipeline equality.
 
 ## Cấu trúc repository
 
@@ -204,8 +222,10 @@ Integration test yêu cầu hai CSV raw, báo cáo pseudo-entity và `artifacts/
 │   ├── 01_eda_and_entity_selection.ipynb
 │   └── 02_leakage_experiment.ipynb
 ├── scripts/
-│   └── init_warehouse.py
+│   ├── init_warehouse.py
+│   └── run_backfill.py
 ├── src/pit_feature_store/
+│   ├── backfill.py
 │   ├── catalog.py
 │   ├── entity_selection.py
 │   ├── leakage.py
@@ -224,7 +244,6 @@ Integration test yêu cầu hai CSV raw, báo cáo pseudo-entity và `artifacts/
 ## Giới hạn hiện tại
 
 - UID là pseudo-entity, không phải customer ID thật; các giao dịch thiếu `card1`, `card2` hoặc `addr1` không có UID.
-- Backfill an toàn/idempotent chưa được triển khai.
 - Chưa có Redis replay, virtual clock, FastAPI serving hoặc offline-online parity.
 - Integration test vẫn phụ thuộc full Kaggle dataset và artifact được tạo trước.
 - Các path runtime là path tương đối, vì vậy cần chạy lệnh từ thư mục gốc repository.

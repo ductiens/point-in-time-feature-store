@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -8,40 +9,64 @@ from .catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catal
 
 DATABASE_PATH = Path("artifacts/warehouse.duckdb")
 
+
+def _validated_relation_name(name: str) -> str:
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None:
+        raise ValueError(f"Unsafe DuckDB relation name: {name!r}")
+    return name
+
+
+def _create_prefix(object_type: str, temporary: bool) -> str:
+    temporary_sql = "TEMP " if temporary else ""
+    return f"CREATE OR REPLACE {temporary_sql}{object_type}"
+
 # Những giao dịch cần tính feature
-def create_label_spine(connection: duckdb.DuckDBPyConnection) -> None:
+def create_label_spine(
+    connection: duckdb.DuckDBPyConnection,
+    source_relation: str = "transactions",
+    temporary: bool = False,
+) -> None:
+    source_relation = _validated_relation_name(source_relation)
     connection.execute(
-        """
-        CREATE OR REPLACE VIEW label_spine AS
+        f"""
+        {_create_prefix("VIEW", temporary)} label_spine AS
         SELECT
             transaction_id AS label_id,
             uid,
             event_ts AS cutoff_ts,
             label
-        FROM transactions
+        FROM {source_relation}
         """
     )
 
 # Lịch sử giao dịch dùng để tính feature
-def create_feature_events(connection: duckdb.DuckDBPyConnection) -> None:
+def create_feature_events(
+    connection: duckdb.DuckDBPyConnection,
+    source_relation: str = "transactions",
+    temporary: bool = False,
+) -> None:
+    source_relation = _validated_relation_name(source_relation)
     connection.execute(
-        """
-        CREATE OR REPLACE VIEW feature_events AS
+        f"""
+        {_create_prefix("VIEW", temporary)} feature_events AS
         SELECT
             uid,
             event_ts AS feature_ts,
             amount,
             transaction_id AS event_id
-        FROM transactions
+        FROM {source_relation}
         WHERE uid IS NOT NULL
         """
     )
 
 # Tính tổng cộng dồn và số lượng giao dịch theo thời gian
-def create_feature_cumsum(connection: duckdb.DuckDBPyConnection) -> None:
+def create_feature_cumsum(
+    connection: duckdb.DuckDBPyConnection,
+    temporary: bool = False,
+) -> None:
     connection.execute(
-        """
-        CREATE OR REPLACE VIEW feature_cumsum AS
+        f"""
+        {_create_prefix("VIEW", temporary)} feature_cumsum AS
         WITH events_by_timestamp AS (
             SELECT
                 uid,
@@ -129,6 +154,7 @@ def _feature_sql(feature: FeatureDefinition) -> str:
 def create_pit_features(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
+    temporary: bool = False,
 ) -> None:
     cumulative_windows = sorted(
         {
@@ -155,7 +181,7 @@ def create_pit_features(
 
     connection.execute(
         f"""
-        CREATE OR REPLACE TABLE pit_features AS
+        {_create_prefix("TABLE", temporary)} pit_features AS
         SELECT
             spine.label_id,
             spine.uid,
@@ -175,12 +201,14 @@ def create_pit_features(
 def build_offline_features(
     connection: duckdb.DuckDBPyConnection,
     catalog_path: Path = CATALOG_PATH,
+    source_relation: str = "transactions",
+    temporary: bool = False,
 ) -> None:
     catalog = load_catalog(catalog_path)
-    create_label_spine(connection)
-    create_feature_events(connection)
-    create_feature_cumsum(connection)
-    create_pit_features(connection, catalog)
+    create_label_spine(connection, source_relation, temporary)
+    create_feature_events(connection, source_relation, temporary)
+    create_feature_cumsum(connection, temporary)
+    create_pit_features(connection, catalog, temporary)
 
 
 def main() -> None:

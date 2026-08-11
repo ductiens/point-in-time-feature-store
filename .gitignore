@@ -8,10 +8,6 @@ __pycache__/
 # Dữ liệu và output
 data/raw/
 artifacts/
-AGENTS.md
-PROJECT_SPEC.md
-STATUS.md
-TODO.md
 
 # Redis
 dump.rdb
