@@ -1,90 +1,221 @@
-python -m venv .venv
-.venv\Scripts\activate
-python -m pip install -r requirements.txt
-deactivate
+# Point-in-Time Correct Feature Store
 
-flowchart TD
-A["Dữ liệu giao dịch"]
-B["Tạo UID và Warehouse"]
-C["Định nghĩa Feature"]
+Feature store tối giản cho bộ dữ liệu [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection), tập trung vào tính đúng tại thời điểm dự đoán (point-in-time correctness). Dự án dùng DuckDB cho offline store và chứng minh rolling feature không sử dụng giao dịch hiện tại hoặc dữ liệu tương lai.
 
-    D["Offline<br/>Tính feature để train model và backfill"]
-    E["Online<br/>Lưu lịch sử trong Redis và trả feature qua API"]
+> Trạng thái hiện tại: warehouse, feature catalog, offline engine và leakage experiment đã hoàn thành. Backfill, Redis/FastAPI online engine, offline-online parity và monitoring chưa được triển khai.
 
-    F["Parity Test<br/>Kiểm tra Offline và Online có giống nhau không"]
+## Mục tiêu
 
-    A --> B
-    B --> C
+- Tính feature theo khoảng `[cutoff - window, cutoff)`: bao gồm biên dưới và loại trừ đúng cutoff.
+- Sinh feature từ catalog YAML thay vì hard-code tên và cửa sổ ở nhiều nơi.
+- So sánh PIT-correct feature với future-looking feature bằng temporal split.
+- Kiểm chứng các biên thời gian và kết quả tính toán bằng test tự động.
 
-    C --> D
+## Kiến trúc hiện tại
+
+```mermaid
+flowchart LR
+    A[IEEE-CIS raw CSV] --> B[Đánh giá pseudo-entity]
+    A --> C[DuckDB transactions]
+    D[Feature catalog YAML] --> E[Offline PIT engine]
     C --> E
+    E --> F[pit_features]
+    F --> G[Leakage experiment]
+    C -. Giai đoạn sau .-> H[Backfill]
+    D -. Giai đoạn sau .-> H
+    C -. Giai đoạn sau .-> I[Redis online engine]
+    D -. Giai đoạn sau .-> I
+    F -. Giai đoạn sau .-> J[Offline-online parity]
+    I -. Giai đoạn sau .-> J
+```
 
-    D --> F
-    E --> F
+Pseudo-entity đang dùng là `card1 + card2 + addr1`, được chọn từ kết quả thực nghiệm: độ phủ 87,45%, 60,49% entity có từ hai giao dịch và 97,15% dòng có UID thuộc entity lặp lại.
 
-card1 + addr1 → Đơn giản nhất nhưng dễ bị trùng nhầm (2 cột quá thô, addr1 dùng chung cho nhiều người)
-card1 + card2 + addr1 → chi tiết hơn nhưng gần như giữ nguyên chất lượng thống kê
-thêm card5 → phức tạp hơn nhưng cải thiện rất ít. Không cần thêm card5, vì thêm vào nhưng kết quả gần như không cải thiện đáng kể.
-thêm D1 → quá hẹp, chia vụn entity. vì tạo tới 231.565 entity, median 1, repeat entity chỉ 26,04% → D1 làm cùng một người bị tách thành nhiều UID.
+## Feature catalog
 
-| Nhóm cần kiểm tra                | Cột dùng để nhìn                                           | Câu hỏi                                                     |
-| -------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
-| **Độ phủ**                       | `total_rows`, `rows_with_uid`, `coverage_pct`              | Công thức tạo UID dùng được cho bao nhiêu giao dịch?        |
-| **Mức độ chia nhỏ**              | `n_entities`, `repeat_entity_pct`, `median_txn_per_entity` | Có phải mỗi giao dịch gần như thành một entity riêng không? |
-| **Khả năng tạo feature lịch sử** | `repeat_row_pct`                                           | Bao nhiêu giao dịch thực sự nằm trong entity có lịch sử?    |
-| **Nguy cơ gom quá rộng**         | `p95_txn_per_entity`, `max_txn_per_entity`                 | Có entity nào chứa quá nhiều giao dịch bất thường không?    |
+Catalog tại `config/feature_catalog.yaml` định nghĩa bốn feature:
 
+| Feature                   | Phép tổng hợp     |  Cửa sổ | Giá trị khi không có lịch sử |
+| ------------------------- | ----------------- | ------: | ---------------------------: |
+| `sum_amt_24h`             | `sum`             |  24 giờ |                          `0` |
+| `count_txn_24h`           | `count`           |  24 giờ |                          `0` |
+| `sum_amt_7d`              | `sum`             | 168 giờ |                          `0` |
+| `time_since_last_txn_sec` | `time_since_last` | 720 giờ |                       `NULL` |
 
+Mọi rolling feature dùng cùng time semantics:
 
-python -c "import duckdb; con=duckdb.connect('warehouse.duckdb'); print(con.sql('SELECT * FROM transactions LIMIT 20').df())"   
+```text
+[cutoff - window, cutoff)
+```
 
+Vì vậy, event tại đúng `cutoff - window` được tính; event tại đúng `cutoff` và mọi event tương lai bị loại.
 
+## Yêu cầu môi trường
 
-flowchart TD
-    S0["Sprint 0 — Bootstrap<br/>Khởi tạo repo, .gitignore<br/>và thư mục kết quả"]
+- Python 3.11 trở lên (đã xác minh với Python 3.13.7).
+- Windows PowerShell cho các lệnh bên dưới.
+- Tài khoản Kaggle đã chấp nhận điều khoản cuộc thi IEEE-CIS nếu tải dữ liệu bằng Kaggle CLI.
+- Khoảng trống đĩa đủ cho CSV gốc, DuckDB warehouse và notebook output.
 
-    S1["Sprint 1 — Setup & Data<br/>Chuẩn bị dữ liệu IEEE-CIS<br/>Chọn công thức pseudo-entity<br/>Khởi tạo DuckDB warehouse"]
+Redis không cần thiết ở trạng thái hiện tại vì online engine chưa được triển khai.
 
-    S2["Sprint 2 — Feature Catalog<br/>Định nghĩa 4 feature<br/>Đọc, validate và test catalog"]
+## Cài đặt từ môi trường mới
 
-    S3["Sprint 3 — Offline Engine<br/>Tính feature Point-in-Time<br/>Không dùng giao dịch hiện tại<br/>hoặc dữ liệu tương lai"]
+Chạy từ thư mục gốc của repository:
 
-    S4["Sprint 4 — Leakage Experiment<br/>So sánh PIT-correct và leaky<br/>ROC-AUC và PR-AUC"]
+```powershell
+python -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
 
-    S5["Sprint 5 — Backfill<br/>Tính lại feature lịch sử<br/>Tái lập, lưu Parquet<br/>và quản lý phiên bản"]
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
+```
 
-    S6["Sprint 6 — Online Feature Store<br/>Redis + FastAPI + Replay dữ liệu<br/><b>PHẦN MỞ RỘNG</b><br/>Thực hiện nếu còn thời gian"]
+Kiểm tra package và các dependency chính:
 
-    S7["Sprint 7 — Offline/Online Parity<br/>So sánh DuckDB và Redis<br/>0 sai lệch trên ít nhất 50 mẫu<br/><b>PHẦN MỞ RỘNG</b>"]
+```powershell
+python -c "import duckdb, pandas, pyarrow, sklearn, lightgbm; import pit_feature_store; print(pit_feature_store.__file__)"
+```
 
-    S8["Sprint 8 — Monitoring<br/>Freshness và Distribution Drift<br/><b>PHẦN MỞ RỘNG</b>"]
+## Chuẩn bị dữ liệu
 
-    S9["Sprint 9 — Docs & Report<br/>Proposal, kiến trúc<br/>và báo cáo kết quả thực tế"]
+Pipeline chính cần `train_transaction.csv`; integration test hiện tại cũng kiểm tra `train_identity.csv`. Đặt hai file tại:
 
+```text
+data/raw/ieee/train_transaction.csv
+data/raw/ieee/train_identity.csv
+```
 
-    S0 -->|"Repo sẵn sàng"| S1
-    S1 -->|"Warehouse và entity sẵn sàng"| S2
-    S2 -->|"Catalog hợp lệ"| S3
-    S3 -->|"Offline feature hoàn thành"| S4
-    S3 -->|"Offline feature hoàn thành"| S5
+Có thể tải bằng Kaggle CLI sau khi cấu hình thông tin xác thực và chấp nhận điều khoản cuộc thi:
 
-    S4 -->|"Có kết quả leakage experiment"| S9
-    S5 -->|"Có kết quả backfill"| S9
+```powershell
+New-Item -ItemType Directory -Force data/raw/ieee
+kaggle competitions download -c ieee-fraud-detection -p data/raw/ieee
+Expand-Archive -Path data/raw/ieee/ieee-fraud-detection.zip -DestinationPath data/raw/ieee -Force
+```
 
-    S2 -.->|"Nếu còn thời gian"| S6
+Dữ liệu raw được Git ignore và không được commit. Warehouse yêu cầu đúng 590.540 dòng cùng các cột `TransactionID`, `TransactionDT`, `TransactionAmt`, `isFraud`, `card1`, `card2` và `addr1`.
 
-    S3 -.->|"Có Offline Engine"| S7
-    S6 -.->|"Có Online Engine"| S7
+## Chạy pipeline hiện có
 
-    S7 -.->|"Nếu còn thời gian"| S8
+Các lệnh dưới đây phải chạy từ thư mục gốc repository và theo đúng thứ tự.
 
-    S7 -.->|"Ghi kết quả parity nếu đã triển khai"| S9
-    S8 -.->|"Ghi kết quả monitoring nếu đã triển khai"| S9
+### 1. Đánh giá pseudo-entity
 
-    classDef optional fill:#f5f5f5,stroke:#757575,stroke-width:2px,stroke-dasharray:6 4;
+```powershell
+python -m jupyter nbconvert --to notebook --execute notebooks/01_eda_and_entity_selection.ipynb --output-dir artifacts/reports --output 01_eda_and_entity_selection.executed.ipynb --ExecutePreprocessor.timeout=900
+```
 
-    class S0,S1 setup;
-    class S2,S3,S5 core;
-    class S4 experiment;
-    class S6,SK,S7,S8 optional;
-    class S9,S10 final;
+Notebook import logic từ `pit_feature_store.entity_selection`, quét trực tiếp
+`train_transaction.csv`, chọn candidate và tạo
+`artifacts/reports/entity_candidate_results.csv`.
+
+### 2. Khởi tạo DuckDB warehouse
+
+```powershell
+python scripts/init_warehouse.py
+```
+
+Lệnh tạo lại bảng `transactions` tại `artifacts/warehouse.duckdb`, chuẩn hóa thời gian theo:
+
+```text
+event_ts = 2017-12-01 00:00:00 + TransactionDT giây
+```
+
+Kiểm tra nhanh số dòng:
+
+```powershell
+python -c "import duckdb; con=duckdb.connect('artifacts/warehouse.duckdb', read_only=True); print(con.sql('SELECT COUNT(*) FROM transactions').fetchone()[0]); con.close()"
+```
+
+Kết quả mong đợi: `590540`.
+
+### 3. Validate catalog và tạo offline feature
+
+```powershell
+python -m pit_feature_store.catalog
+python -m pit_feature_store.offline_engine
+```
+
+Offline engine tạo trong DuckDB:
+
+- `label_spine`: điểm dự đoán và label.
+- `feature_events`: lịch sử event, không chứa label.
+- `feature_cumsum`: cumulative sum/count theo UID.
+- `pit_features`: bốn feature PIT-correct cho 590.540 giao dịch.
+
+### 4. Chạy leakage experiment
+
+```powershell
+python -m jupyter nbconvert --to notebook --execute notebooks/02_leakage_experiment.ipynb --output-dir artifacts/reports --output 02_leakage_experiment.executed.ipynb --ExecutePreprocessor.timeout=900
+```
+
+Notebook dùng temporal split, không random split, và ghi:
+
+- `artifacts/reports/leakage_metrics.csv`
+- `artifacts/reports/leakage_experiment.md`
+- `artifacts/reports/02_leakage_experiment.executed.ipynb`
+
+Kết quả đã xác minh trên môi trường dự án:
+
+| Dataset      |  ROC-AUC |   PR-AUC |
+| ------------ | -------: | -------: |
+| PIT          | 0,679783 | 0,067894 |
+| Future-only  | 0,674214 | 0,064931 |
+| PIT + future | 0,705485 | 0,074536 |
+
+Future-only không mặc định tốt hơn PIT; kết luận leakage dựa trên số liệu thực nghiệm. Phép so sánh kiểm soát `PIT + future` cao hơn PIT ở lần chạy đã xác minh.
+
+## Chạy test
+
+Unit test không cần dataset Kaggle hoặc service ngoài:
+
+```powershell
+python -m pytest tests/unit -v
+```
+
+Toàn bộ test:
+
+```powershell
+python -m pytest tests -v
+```
+
+Integration test yêu cầu hai CSV raw, báo cáo pseudo-entity và `artifacts/warehouse.duckdb` đã được tạo theo workflow phía trên. Test hiện tại bao phủ catalog validation, tính offline so với Pandas, biên thời gian, tách entity, temporal split và cấu trúc warehouse.
+
+## Cấu trúc repository
+
+```text
+.
+├── config/
+│   └── feature_catalog.yaml
+├── data/raw/ieee/                 # Git ignored
+├── notebooks/
+│   ├── 01_eda_and_entity_selection.ipynb
+│   └── 02_leakage_experiment.ipynb
+├── scripts/
+│   └── init_warehouse.py
+├── src/pit_feature_store/
+│   ├── catalog.py
+│   ├── entity_selection.py
+│   ├── leakage.py
+│   ├── offline_engine.py
+│   └── warehouse.py
+├── tests/
+│   ├── integration/
+│   └── unit/
+├── artifacts/                     # Git ignored
+├── pyproject.toml
+└── requirements.txt
+```
+
+`artifacts/` chứa warehouse, report và notebook đã execute; toàn bộ thư mục này được tạo lại và không được commit.
+
+## Giới hạn hiện tại
+
+- UID là pseudo-entity, không phải customer ID thật; các giao dịch thiếu `card1`, `card2` hoặc `addr1` không có UID.
+- Backfill an toàn/idempotent chưa được triển khai.
+- Chưa có Redis replay, virtual clock, FastAPI serving hoặc offline-online parity.
+- Integration test vẫn phụ thuộc full Kaggle dataset và artifact được tạo trước.
+- Các path runtime là path tương đối, vì vậy cần chạy lệnh từ thư mục gốc repository.
