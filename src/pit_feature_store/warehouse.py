@@ -4,7 +4,7 @@ import duckdb
 
 
 DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
-DATABASE_PATH = Path("warehouse.duckdb")
+DATABASE_PATH = Path("artifacts/warehouse.duckdb")
 EXPECTED_ROW_COUNT = 590_540
 
 # Các cột bắt buộc phải có trong file IEEE-CIS.
@@ -294,6 +294,8 @@ def build_warehouse() -> Path:
         raise FileNotFoundError(
             f"Không tìm thấy dataset: {DATA_PATH.resolve()}"
         )
+
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     connection = duckdb.connect(
         DATABASE_PATH.as_posix()

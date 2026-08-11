@@ -5,8 +5,8 @@ import pandas as pd
 
 DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
 IDENTITY_PATH = Path("data/raw/ieee/train_identity.csv")
-REPORT_PATH = Path("reports/entity_candidate_results.csv")
-WAREHOUSE_PATH = Path("warehouse.duckdb")
+REPORT_PATH = Path("artifacts/reports/entity_candidate_results.csv")
+WAREHOUSE_PATH = Path("artifacts/warehouse.duckdb")
 SELECTED_CANDIDATE = "card1_card2_addr1"
 
 EXPECTED_ROWS = 590_540

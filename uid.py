@@ -6,7 +6,7 @@ import pandas as pd
 
 
 DATA_PATH = Path("data/raw/ieee/train_transaction.csv")
-OUTPUT_PATH = Path("reports/entity_candidate_results.csv")
+OUTPUT_PATH = Path("artifacts/reports/entity_candidate_results.csv")
 
 
 # Mỗi candidate là một nhóm cột được dùng để đại diện cho một entity.

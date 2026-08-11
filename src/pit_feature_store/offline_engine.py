@@ -6,7 +6,7 @@ import duckdb
 from .catalog import CATALOG_PATH, FeatureCatalog, FeatureDefinition, load_catalog
 
 
-DATABASE_PATH = Path("warehouse.duckdb")
+DATABASE_PATH = Path("artifacts/warehouse.duckdb")
 
 # Những giao dịch cần tính feature
 def create_label_spine(connection: duckdb.DuckDBPyConnection) -> None:
