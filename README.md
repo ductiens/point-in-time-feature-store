@@ -183,6 +183,10 @@ Future-only không mặc định tốt hơn PIT; kết luận leakage dựa trê
 python scripts/run_backfill.py --start-date 2018-01-01 --end-date 2018-01-01
 ```
 
+```powershell
+python -c "import pandas as pd, hashlib; p='artifacts/offline_store/backfill/version=1.0.0-a56eaf7727288928/2018-01-01_2018-01-01/features.parquet'; df=pd.read_parquet(p).sort_values(['cutoff_ts','label_id']).reset_index(drop=True); csv=df.to_csv(index=False, lineterminator='\n', date_format='%Y-%m-%d %H:%M:%S.%f', na_rep='<NA>', float_format='%.17g'); print('rows=', len(df)); print('logic_sha256=', hashlib.sha256(csv.encode('utf-8')).hexdigest())"
+```
+
 Khoảng ngày bao gồm cả `start-date` và `end-date`. Backfill tự lấy lookback lớn
 nhất từ catalog, dùng TEMP objects và ghi kết quả an toàn tại:
 

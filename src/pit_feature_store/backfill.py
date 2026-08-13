@@ -1,5 +1,3 @@
-"""Deterministic, point-in-time correct historical feature backfill."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,17 +23,17 @@ CATALOG_FINGERPRINT_LENGTH = 16
 
 @dataclass(frozen=True)
 class BackfillResult:
-    output_path: Path
-    catalog_snapshot_path: Path
-    log_path: Path
-    version: str
-    catalog_fingerprint: str
-    start_date: date
-    end_date: date
-    lookback_hours: int
-    row_count: int
+    output_path: Path # Đường dẫn file Parquet.
+    catalog_snapshot_path: Path # Đường dẫn bản sao catalog đã dùng.
+    log_path: Path # Đường dẫn file log.
+    version: str # Phiên bản của backfill.
+    catalog_fingerprint: str # Fingerprint của catalog.
+    start_date: date # Ngày bắt đầu.
+    end_date: date # Ngày kết thúc.
+    lookback_hours: int # Số giờ phải đọc lùi về quá khứ.
+    row_count: int # Số dòng được ghi vào Parquet.
 
-
+# Đảm bảo start_date và end_date thực sự là ngày dạng YYYY-MM-DD
 def parse_backfill_date(value: str | date, field_name: str) -> date:
     if isinstance(value, datetime):
         raise ValueError(f"{field_name} must be a date, not a datetime.")
@@ -53,7 +51,7 @@ def parse_backfill_date(value: str | date, field_name: str) -> date:
         raise ValueError(f"{field_name} must use YYYY-MM-DD format: {value!r}.")
     return parsed
 
-
+# Tạo một mã đại diện cho nội dung catalog.
 def catalog_fingerprint(catalog: FeatureCatalog) -> str:
     canonical_catalog = json.dumps(
         catalog.model_dump(mode="json"),
@@ -63,22 +61,22 @@ def catalog_fingerprint(catalog: FeatureCatalog) -> str:
     ).encode("utf-8")
     return sha256(canonical_catalog).hexdigest()[:CATALOG_FINGERPRINT_LENGTH]
 
-
+# Nó biến Python string thành SQL string literal an toàn hơn.
 def _sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
-
+# Mục tiêu là chuyển Python datetime thành SQL.
 def _timestamp_sql(value: datetime) -> str:
     return f"TIMESTAMP {_sql_string(value.isoformat(sep=' '))}"
 
-
+# ghi một bản ghi log
 def _append_log(log_path: Path, record: dict[str, object]) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
         log_file.write(json.dumps(record, ensure_ascii=False, sort_keys=True))
         log_file.write("\n")
 
-
+# Hàm chính để thực hiện backfill. Nó sẽ tạo ra các tính năng PIT cho một khoảng thời gian từ start_date đến end_date, sử dụng catalog và warehouse đã chỉ định. Kết quả được lưu trữ trong các tệp Parquet và log được ghi lại.
 def run_backfill(
     start_date: str | date,
     end_date: str | date,
@@ -88,13 +86,6 @@ def run_backfill(
     output_root: Path = BACKFILL_ROOT,
     log_path: Path = BACKFILL_LOG_PATH,
 ) -> BackfillResult:
-    """Build PIT features for an inclusive calendar-date range.
-
-    The source cohort includes exactly the catalog lookback before ``start_date``.
-    All intermediate feature objects live in an in-memory DuckDB connection and
-    are declared TEMP, while the warehouse is attached read-only.
-    """
-
     parsed_start = parse_backfill_date(start_date, "start_date")
     parsed_end = parse_backfill_date(end_date, "end_date")
     if parsed_start > parsed_end:
@@ -123,6 +114,7 @@ def run_backfill(
     output_path = output_directory / "features.parquet"
     catalog_snapshot_path = output_directory / "catalog_snapshot.yaml"
 
+    # [start_ts, end_exclusive_ts)
     start_ts = datetime.combine(parsed_start, time.min)
     end_exclusive_ts = datetime.combine(
         parsed_end + timedelta(days=1),

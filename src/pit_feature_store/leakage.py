@@ -1,10 +1,3 @@
-"""Reusable PIT/future dataset preparation for the leakage experiment.
-
-This module owns SQL feature generation, observation bounds, temporal splitting,
-and aligned feature-frame loading. Model fitting, evaluation, comparison, and
-research reporting live directly in ``notebooks/02_leakage_experiment.ipynb``.
-"""
-
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,32 +22,32 @@ class ObservationBounds:
 
     start: pd.Timestamp
     end: pd.Timestamp
-    total_rows: int
-    eligible_rows: int
+    total_rows: int # tổng số giao dịch trong toàn bộ dữ liệu
+    eligible_rows: int # số giao dịch nằm trong khoảng hợp lệ
 
     @property
     def excluded_rows(self) -> int:
         return self.total_rows - self.eligible_rows
 
-
+# danh sách tên feature
 def feature_names(catalog: FeatureCatalog) -> list[str]:
     return [feature.name for feature in catalog.features]
 
-
+# Trả tên của feature tương lai dựa trên định nghĩa feature. Nếu aggregation là "time_since_last", trả về "time_to_next_txn_sec", ngược lại trả về "future_" + tên feature.
 def future_feature_name(feature: FeatureDefinition) -> str:
     if feature.aggregation == "time_since_last":
         return "time_to_next_txn_sec"
     return f"future_{feature.name}"
 
-
+# Trả về danh sách tên các feature tương lai dựa trên catalog. Sử dụng hàm future_feature_name để lấy tên của từng feature trong catalog.
 def future_feature_names(catalog: FeatureCatalog) -> list[str]:
     return [future_feature_name(feature) for feature in catalog.features]
 
-
+# Hàm này tạo ra một alias cho bảng cumulative dựa trên số giờ của window. Ví dụ, nếu window_hours là 24, alias sẽ là "upper_24h".
 def _upper_alias(window_hours: int) -> str:
     return f"upper_{window_hours}h"
 
-
+# Hàm này tạo ra một đoạn SQL để tính toán giá trị feature tương lai dựa trên định nghĩa feature. Nếu aggregation là "sum" hoặc "count", nó sẽ tính toán giá trị tích lũy và trừ đi giá trị tại cutoff. Nếu aggregation là "time_since_last", nó sẽ tính toán thời gian kể từ sự kiện tiếp theo. Nếu aggregation không được hỗ trợ, nó sẽ ném ra lỗi.
 def _future_feature_sql(feature: FeatureDefinition) -> str:
     if feature.aggregation in {"sum", "count"}:
         cumulative_column = {
@@ -87,13 +80,11 @@ def _future_feature_sql(feature: FeatureDefinition) -> str:
 
     raise ValueError(f"Unsupported aggregation: {feature.aggregation}")
 
-
+# Hàm này tạo ra bảng leaky_features với cùng schema feature như pit_features. Nó tính toán các giá trị feature tương lai dựa trên các định nghĩa feature trong catalog và lưu trữ chúng trong bảng leaky_features. Các giá trị feature được tính toán dựa trên các cửa sổ tích lũy và sự kiện tiếp theo, nếu cần.
 def create_leaky_features(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
 ) -> None:
-    """Create leaky_features with the same feature schema as pit_features."""
-
     cumulative_windows = sorted(
         {
             feature.window_hours
@@ -149,7 +140,7 @@ def create_leaky_features(
         """
     )
 
-
+# Hàm này tạo ra một view pit_plus_future_features kết hợp các feature từ pit_features và leaky_features. Nó sử dụng các alias để đặt tên cho các feature tương lai dựa trên định nghĩa feature trong catalog. View này có thể được sử dụng để so sánh hiệu suất của các mô hình dựa trên các feature hiện tại và các feature tương lai.
 def create_pit_plus_future_view(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
@@ -178,7 +169,7 @@ def create_pit_plus_future_view(
         """
     )
 
-
+# Hàm này xây dựng các dataset liên quan đến leakage. Nó tải catalog từ đường dẫn được cung cấp, xây dựng các feature offline, tạo các feature leaky và tạo view pit_plus_future. Cuối cùng, nó trả về catalog đã được xây dựng.
 def build_leakage_datasets(
     connection: duckdb.DuckDBPyConnection,
     catalog_path: Path = CATALOG_PATH,
@@ -189,7 +180,7 @@ def build_leakage_datasets(
     create_pit_plus_future_view(connection, catalog)
     return catalog
 
-
+# Hàm này tìm các giới hạn quan sát hợp lệ cho việc xây dựng mô hình. Nó tính toán thời gian bắt đầu và kết thúc dựa trên khoảng thời gian lookback được xác định trong catalog. Nó cũng đếm tổng số hàng và số hàng đủ điều kiện trong khoảng thời gian này. Nếu không thể xác định giới hạn quan sát từ dữ liệu, nó sẽ ném ra lỗi.
 def find_observation_bounds(
     connection: duckdb.DuckDBPyConnection,
     catalog: FeatureCatalog,
@@ -231,7 +222,7 @@ def find_observation_bounds(
         )
     return bounds
 
-
+# Hàm này chọn một timestamp để chia dữ liệu thành tập huấn luyện và tập kiểm tra dựa trên train_fraction. Nó sử dụng hàm quantile_disc để tìm giá trị cutoff_ts tại phần trăm train_fraction trong khoảng thời gian hợp lệ. Nếu train_fraction không nằm trong khoảng (0, 1) hoặc không thể chọn được timestamp từ dữ liệu, nó sẽ ném ra lỗi.
 def choose_split_timestamp(
     connection: duckdb.DuckDBPyConnection,
     bounds: ObservationBounds,
@@ -252,7 +243,7 @@ def choose_split_timestamp(
         raise ValueError("Cannot choose a split timestamp from an empty dataset.")
     return pd.Timestamp(split_ts)
 
-
+# Hàm này tải một DataFrame từ một bảng feature cụ thể (pit_features, leaky_features hoặc pit_plus_future_features) dựa trên các cột được chỉ định và giới hạn quan sát. Nó kiểm tra xem bảng có hợp lệ không, thực hiện truy vấn SQL để lấy dữ liệu, chuyển đổi cột cutoff_ts sang định dạng datetime và kiểm tra số lượng hàng đủ điều kiện. Nếu số lượng hàng không khớp với số lượng hàng đủ điều kiện, nó sẽ ném ra lỗi.
 def load_feature_frame(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
@@ -283,7 +274,7 @@ def load_feature_frame(
         )
     return frame
 
-
+# đánh dấu dòng nào thuộc train và dòng nào thuộc test theo thời gian.
 def temporal_masks(
     frame: pd.DataFrame,
     split_ts: pd.Timestamp,
@@ -294,7 +285,7 @@ def temporal_masks(
         raise ValueError("Temporal split must produce non-empty train and test sets.")
     return train_mask, test_mask
 
-
+# Hàm này chuẩn bị các DataFrame cho thí nghiệm leakage. Nó xây dựng các dataset liên quan đến leakage, tìm các giới hạn quan sát, chọn timestamp chia dữ liệu, tải các DataFrame từ các bảng feature và kiểm tra xem các DataFrame có cùng spine không. Cuối cùng, nó trả về một dictionary chứa catalog, bounds, split_ts, danh sách tên feature và các DataFrame.
 def prepare_experiment_frames(
     connection: duckdb.DuckDBPyConnection,
     catalog_path: Path = CATALOG_PATH,
