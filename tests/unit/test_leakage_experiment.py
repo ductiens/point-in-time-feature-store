@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import duckdb
 import pandas as pd
 
@@ -18,6 +21,11 @@ from pit_feature_store.offline_engine import build_offline_features
 
 
 BASE_TS = pd.Timestamp("2020-01-10 12:00:00")
+NOTEBOOK_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "notebooks"
+    / "02_leakage_experiment.ipynb"
+)
 
 
 def leakage_connection(rows: list[tuple]) -> duckdb.DuckDBPyConnection:
@@ -241,3 +249,41 @@ def test_prepare_experiment_frames_returns_aligned_engineering_datasets() -> Non
     train_mask, test_mask = temporal_masks(frames["pit"], prepared["split_ts"])
     assert train_mask.any()
     assert test_mask.any()
+
+
+def test_notebook_contains_controlled_leakage_analysis() -> None:
+    notebook = json.loads(NOTEBOOK_PATH.read_text(encoding="utf-8"))
+    cells_by_id = {cell["id"]: cell for cell in notebook["cells"]}
+
+    def source(cell_id: str) -> str:
+        return "".join(cells_by_id[cell_id]["source"])
+
+    rationale = source("research-rationale")
+    permutation = source("permutation-importance")
+    shuffle = source("future-block-shuffle")
+    bootstrap = source("paired-bootstrap")
+    export = source("export-results")
+
+    assert "### Why these visualizations demonstrate leakage" in rationale
+    assert "Temporal availability xác lập leakage" in source(
+        "runtime-conclusion"
+    )
+    assert "permutation_importance(" in permutation
+    assert "X_test_augmented" in permutation
+    assert "scoring='average_precision'" in permutation
+    assert "n_repeats=10" in permutation
+    assert "n_future_permutations = 50" in shuffle
+    assert "X_test_augmented[future_columns]" in shuffle
+    assert ".iloc[row_permutation]" in shuffle
+    assert ".fit(" not in shuffle
+    assert "n_bootstrap = 500" in bootstrap
+    assert "pit_probability_values[bootstrap_indices]" in bootstrap
+    assert "augmented_probability_values[" in bootstrap
+    assert "bootstrap_indices" in bootstrap
+    assert "## Paired bootstrap uncertainty" in export
+    assert "## Future-block shuffle ablation" in export
+    assert "## Top future permutation importance" in export
+
+    for cell in notebook["cells"]:
+        if cell["cell_type"] == "code":
+            compile("".join(cell["source"]), cell["id"], "exec")
