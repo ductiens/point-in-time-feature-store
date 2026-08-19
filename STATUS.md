@@ -1,19 +1,21 @@
 # PROJECT STATUS
 
-Cập nhật lần cuối: 2026-08-11, đã được Codex xác minh sau khi hoàn thành Giai
-đoạn 5 — Backfill.
+Cập nhật lần cuối: 2026-08-14, đã được Codex xác minh sau khi hoàn thành
+Giai đoạn 7 — Parity.
 
 ## 1. Giai đoạn hiện tại
 
-Dự án đã hoàn thành Giai đoạn 5: Backfill.
+Dự án đã hoàn thành Giai đoạn 7: Parity.
 
 Giai đoạn 4.5 đã hoàn thành toàn bộ 7 sub-task từ 4.5.1 đến 4.5.7; Giai đoạn 5
-đã hoàn thành toàn bộ 4 sub-task từ 5.1 đến 5.4.
+đã hoàn thành toàn bộ 4 sub-task từ 5.1 đến 5.4; Giai đoạn 6 đã hoàn thành toàn
+bộ 4 sub-task từ 6.1 đến 6.4; Giai đoạn 7 đã hoàn thành cả 7.1 và 7.2.
 
-README đã được viết lại theo src-layout và mô tả workflow tái lập hiện có từ cài
-đặt, chuẩn bị dữ liệu, đánh giá pseudo-entity, tạo warehouse/offline feature,
-leakage experiment và backfill. Task 10.2 vẫn chưa đánh dấu hoàn thành vì online
-và parity chưa được triển khai để tài liệu hóa/kiểm tra end-to-end.
+README đã được cập nhật theo src-layout và mô tả workflow tái lập hiện có từ cài
+đặt, chuẩn bị dữ liệu, đánh giá pseudo-entity, warehouse/offline feature, leakage
+experiment, backfill đến Redis replay và FastAPI. Hướng dẫn Docker/API chi tiết
+nằm tại `STAGE6_ONLINE_ENGINE_API.md`. Task 10.2 vẫn chờ bổ sung workflow parity
+vào README và lượt kiểm tra tài liệu end-to-end từ môi trường sạch.
 
 Notebook EDA hiện import logic từ `src/pit_feature_store/entity_selection.py`,
 quét trực tiếp `train_transaction.csv` và tự ghi report; không còn đọc
@@ -21,7 +23,9 @@ quét trực tiếp `train_transaction.csv` và tự ghi report; không còn đ�
 
 Notebook 01 hiện là EDA report đầy đủ. Notebook 02 trực tiếp hiển thị feature
 exploration, temporal split, Dummy baseline và ba LightGBM fit/evaluation; reusable
-SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
+SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`. Notebook 02
+cũng có controlled leakage evidence: prediction-time timeline, held-out permutation
+importance, grouped future-block shuffle và paired bootstrap uncertainty.
 
 **Quyết định mới (2026-08-07):** đã duyệt cấu trúc mã nguồn dạng src-layout (`src/pit_feature_store/`, `scripts/`, `notebooks/`, `tests/unit`+`integration`, `artifacts/`) — xem `PROJECT_SPEC.md` mục 21 và `TODO.md` Giai đoạn 4.5. Giai đoạn 1-4 đã hoàn thành dưới cấu trúc flat cũ (root), **không viết lại logic/kết quả đã có** — chỉ cần 1 lượt di dời cơ học (Giai đoạn 4.5) trước khi tiếp tục Giai đoạn 5.
 
@@ -46,8 +50,14 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
 - `src/pit_feature_store/warehouse.py`
 - `src/pit_feature_store/leakage.py`
 - `src/pit_feature_store/backfill.py`
+- `src/pit_feature_store/online_engine.py`
+- `src/pit_feature_store/serving.py`
+- `src/pit_feature_store/parity.py`
 - `scripts/init_warehouse.py`
 - `scripts/run_backfill.py`
+- `scripts/run_online_replay.py`
+- `scripts/run_api.py`
+- `scripts/run_parity.py`
 - `notebooks/01_eda_and_entity_selection.ipynb`
 - `notebooks/02_leakage_experiment.ipynb`
 
@@ -71,6 +81,11 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
 - `pyproject.toml`
 - `requirements.txt`
 
+### Tài liệu
+
+- `README.md`
+- `STAGE6_ONLINE_ENGINE_API.md`
+
 ### Thư mục đã tạo
 
 - `tests/`
@@ -86,6 +101,7 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
 ## 3. File đã kiểm tra
 
 - `README.md`
+- `STAGE6_ONLINE_ENGINE_API.md`
 - `requirements.txt`
 - `notebooks/01_eda_and_entity_selection.ipynb`
 - `artifacts/reports/entity_candidate_results.csv`
@@ -114,6 +130,17 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
 - `scripts/run_backfill.py`
 - `tests/integration/test_backfill_idempotent.py`
 - `tests/integration/test_backfill_matches_full_pipeline.py`
+- `src/pit_feature_store/online_engine.py`
+- `src/pit_feature_store/serving.py`
+- `scripts/run_online_replay.py`
+- `scripts/run_api.py`
+- `tests/unit/test_online_engine.py`
+- `tests/integration/test_online_replay.py`
+- `tests/integration/test_serving_api.py`
+- `src/pit_feature_store/parity.py`
+- `scripts/run_parity.py`
+- `tests/unit/test_parity_values.py`
+- `tests/integration/test_parity.py`
 
 ## 4. File đã sửa
 
@@ -184,8 +211,14 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
     khởi tạo/fit/predict/score ba `LGBMClassifier`.
   - Có feature table/distributions, cohort/split summary, comparison table,
     ROC/PR curves, PIT feature importance và conclusion.
+  - Phân biệt leakage existence với impact; có timeline transaction thật,
+    permutation importance trên test, 50 grouped future-block shuffles, 500 paired
+    bootstrap samples, evidence summary và conclusion theo kết quả runtime.
+  - Giữ section/chart/report title bằng tiếng Anh; research rationale,
+    interpretation, conclusion và report narrative bằng tiếng Việt.
   - Tạo `artifacts/reports/leakage_metrics.csv` và
-    `artifacts/reports/leakage_experiment.md`.
+    `artifacts/reports/leakage_experiment.md`; Markdown report chứa controlled
+    delta, bootstrap CI, shuffle summary và top future importance.
   - Đọc warehouse từ `artifacts/warehouse.duckdb`.
 - `tests/unit/test_leakage_experiment.py`
   - Cập nhật import sang `pit_feature_store.leakage`, bỏ alias tạm cho root module.
@@ -193,6 +226,9 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
   - Kiểm tra cohort đủ observation window, schema catalog-driven và time split sau lọc.
   - Kiểm tra ba model, missing value, fraud-rate baseline và nội dung report markdown
     được render từ module.
+  - Có regression test static cho research rationale, held-out permutation,
+    grouped block shuffle, paired bootstrap, runtime report sections và compile
+    toàn bộ code cell notebook.
 - `tests/conftest.py`
   - Cung cấp fixture `small_transactions_connection` dùng DuckDB in-memory với ba
     giao dịch nhỏ và tự đóng connection sau test.
@@ -213,10 +249,16 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
   - Phân biệt notebook cho EDA/model research với `src/` cho reusable data logic.
   - Thêm workflow PowerShell từ `pip install -e .` đến EDA, warehouse, catalog,
     offline engine, leakage notebook và test theo đúng src-layout hiện có.
-  - Cập nhật mọi đường dẫn warehouse/report sang `artifacts/` và phân biệt rõ tính
-    năng đã hoàn thành với online/parity chưa triển khai.
+  - Cập nhật mọi đường dẫn warehouse/report sang `artifacts/`.
   - Bỏ bước chạy `uid.py`; notebook EDA là entry point tự tính report từ raw data.
   - Thêm lệnh backfill, output versioned, catalog snapshot và log path.
+  - Cập nhật trạng thái/workflow qua Giai đoạn 6; thêm quick start Redis Docker,
+    online replay, FastAPI endpoint, test online và cấu trúc source mới.
+  - Liên kết tới `STAGE6_ONLINE_ENGINE_API.md`; workflow parity Giai đoạn 7 chưa
+    được bổ sung vì cập nhật README thuộc task 10.2, ngoài phạm vi lần này.
+- `STAGE6_ONLINE_ENGINE_API.md`
+  - Hướng dẫn chi tiết chạy Redis bằng Docker Desktop, replay, API, request mẫu,
+    test, quản lý container và troubleshooting.
 - `src/pit_feature_store/backfill.py`
   - Đọc `transactions` từ warehouse được attach read-only; không đọc raw CSV.
   - Tính lookback từ `catalog.max_lookback_hours`, chạy PIT engine bằng TEMP objects
@@ -236,13 +278,57 @@ SQL/PIT/future dataset preparation vẫn ở `src/pit_feature_store/`.
 - `tests/integration/test_backfill_matches_full_pipeline.py`
   - So output backfill với full `pit_features` cùng khoảng và xác nhận bảng chính
     không bị thay đổi.
+- `requirements.txt`
+  - Thêm `fakeredis==2.37.0`; `httpx` đã có sẵn cho FastAPI `TestClient`.
+- `src/pit_feature_store/online_engine.py`
+  - Lưu raw event trong Redis ZSET `events:<uid>` với member JSON chứa transaction
+    ID/amount và score là epoch.
+  - Tính feature theo catalog với interval `[cutoff-window, cutoff)`, gồm cả default
+    cho entity chưa có lịch sử và `None` cho `time_since_last` ngoài 720 giờ.
+  - Dọn riêng namespace dự án, quản lý virtual clock, chuẩn hóa timestamp giả lập
+    theo UTC và replay deterministic theo thứ tự thời gian.
+  - Đọc warehouse theo batch trong package để CLI chỉ còn là wrapper mỏng.
+- `scripts/run_online_replay.py`
+  - CLI nhận warehouse/catalog/Redis URL, gọi replay engine và in kết quả.
+- `src/pit_feature_store/serving.py`
+  - Export FastAPI `app` và app factory có thể inject Redis client khi test.
+  - Endpoint `GET /features/{uid}` hỗ trợ `as_of_epoch`, dùng virtual clock khi bỏ
+    qua, trả 503 khi clock chưa sẵn sàng và 422 cho cutoff không hữu hạn.
+- `scripts/run_api.py`
+  - CLI mỏng chạy Uvicorn với FastAPI app.
+- `tests/unit/test_online_engine.py`
+  - Kiểm tra ZSET raw, catalog-driven calculation, interval, entity độc lập, event
+    cùng timestamp, cleanup, replay compute-before-ingest và virtual clock.
+- `tests/integration/test_online_replay.py`
+  - Kiểm tra DuckDB → Redis replay theo thứ tự, PIT semantics và không xóa state khi
+    warehouse đầu vào không tồn tại.
+- `tests/integration/test_serving_api.py`
+  - Kiểm tra explicit/implicit cutoff, đủ bốn feature, default entity mới, HTTP 503
+    và validation cutoff bằng `TestClient` + `fakeredis`.
+- `src/pit_feature_store/parity.py`
+  - Lấy mẫu offline deterministic từ `pit_features`, lọc UID thiếu và bắt buộc ít
+    nhất 50 mẫu.
+  - Tính online từ raw Redis event tại đúng `uid`/`cutoff`, dùng danh sách feature
+    từ catalog và không thay đổi offline/online engine.
+  - Chuẩn hóa `NULL`/`NaN`/`None`, dùng sai số float nhỏ và trả chi tiết từng
+    mismatch.
+- `scripts/run_parity.py`
+  - CLI nhận warehouse/catalog/Redis URL/sample size, in tổng kết cùng từng
+    mismatch và trả exit code khác 0 khi có sai lệch.
+- `tests/unit/test_parity_values.py`
+  - Kiểm tra chuẩn hóa missing, sai số float, guard tối thiểu 50 mẫu và report CLI.
+- `tests/integration/test_parity.py`
+  - Nối DuckDB offline pipeline, Redis replay bằng `fakeredis` và parity trên 64
+    mẫu; kiểm tra đủ bốn feature, 0 mismatch và chẩn đoán khi cố ý tạo lệch.
 - `reports/`
   - Đã xóa toàn bộ thư mục legacy sau khi xác nhận các bản artifact tương ứng.
 - `TODO.md`
-  - Ghi nhận README đã chuẩn hóa cho phạm vi hiện tại nhưng giữ task 10.2 ở trạng
-    thái chưa hoàn thành cho đến khi workflow Giai đoạn 5-7 tồn tại.
+  - Giữ nguyên lịch sử hoàn thành Giai đoạn 6 và đánh dấu hoàn thành Giai đoạn 7
+    (7.1-7.2) sau khi test parity và toàn bộ test đều pass.
+  - Giữ task 10.2 chưa hoàn thành cho đến khi README có workflow parity và được
+    xác minh từ môi trường sạch.
 - `STATUS.md`
-  - Ghi nhận phạm vi, lệnh kiểm tra, kết quả và giới hạn của lần cập nhật README.
+  - Ghi nhận phạm vi, lệnh kiểm tra, kết quả và giới hạn của Giai đoạn 7.
 
 ## 5. Candidate đã chọn
 
@@ -354,6 +440,30 @@ phân mảnh mạnh như candidate có `D1`.
 - `.\.venv\Scripts\python.exe -m pytest tests\unit -v -p no:cacheprovider`
 - `.\.venv\Scripts\python.exe -m pytest tests -v -p no:cacheprovider`
 - `git diff --check`
+- `.\.venv\Scripts\python.exe -m pip install fakeredis==2.37.0`
+- `.\.venv\Scripts\python.exe -B -m py_compile src\pit_feature_store\online_engine.py src\pit_feature_store\serving.py scripts\run_online_replay.py scripts\run_api.py tests\unit\test_online_engine.py tests\integration\test_online_replay.py tests\integration\test_serving_api.py`
+- `.\.venv\Scripts\python.exe -B scripts\run_online_replay.py --help`
+- `.\.venv\Scripts\python.exe -B -m pytest tests\integration\test_serving_api.py -v -p no:cacheprovider`
+- `.\.venv\Scripts\python.exe -B -m pytest tests\unit\test_online_engine.py tests\integration\test_online_replay.py tests\integration\test_serving_api.py -v -p no:cacheprovider`
+- `.\.venv\Scripts\python.exe -B -m pytest tests -v -p no:cacheprovider`
+- Kiểm tra toàn bộ path local được thêm vào README bằng PowerShell `Test-Path`.
+- Dùng `rg` xác nhận README không còn tuyên bố online engine chưa triển khai.
+- `git diff --check -- README.md TODO.md STATUS.md STAGE6_ONLINE_ENGINE_API.md`
+- `.\.venv\Scripts\python.exe -B -m pytest tests\unit\test_leakage_experiment.py tests\unit\test_offline_correctness.py tests\unit\test_time_boundaries.py tests\unit\test_catalog.py -v -p no:cacheprovider`
+- `.\.venv\Scripts\python.exe -m jupyter nbconvert --to notebook --execute --inplace notebooks\02_leakage_experiment.ipynb --ExecutePreprocessor.timeout=1200`
+- Validate notebook 02 bằng `nbformat`: 42 cell, 19 code cell, execution count
+  liên tục 1-19, ID duy nhất, không error output và mọi code cell compile được.
+- `.\.venv\Scripts\python.exe -B -m pytest tests\integration\test_backfill_idempotent.py::test_backfill_is_logically_idempotent_and_writes_versioned_outputs -v -p no:cacheprovider`
+- `.\.venv\Scripts\python.exe -B -m pytest tests -v -p no:cacheprovider`
+
+- Kiểm tra compile in-memory cho `src/pit_feature_store/parity.py`,
+  `scripts/run_parity.py`, `tests/unit/test_parity_values.py` và
+  `tests/integration/test_parity.py` bằng built-in `compile()`.
+- Chạy `scripts/run_parity.py --help` bằng Python trong `.venv`.
+- Chạy riêng `tests/unit/test_parity_values.py` và
+  `tests/integration/test_parity.py` bằng pytest verbose, tắt cache provider.
+- Chạy toàn bộ `tests/` bằng pytest verbose, tắt cache provider.
+- `git diff --check -- src/pit_feature_store/parity.py scripts/run_parity.py tests/unit/test_parity_values.py tests/integration/test_parity.py TODO.md STATUS.md`
 
 ## 7. Kết quả
 
@@ -501,15 +611,72 @@ phân mảnh mạnh như candidate có `D1`.
 - Parquet CLI khớp full `pit_features` cùng ngày; catalog snapshot khớp file nguồn;
   backfill log ghi success. Integration test xác nhận chạy hai lần cho DataFrame
   bằng nhau và không thay đổi bảng `pit_features` chính.
+- `fakeredis==2.37.0` cài thành công cùng dependency `sortedcontainers==2.4.0`;
+  Redis thật không cần cho test Giai đoạn 6.
+- Online engine trả đúng bốn feature catalog-driven từ raw Redis events, bao gồm
+  biên dưới và loại event tại cutoff; entity mới và entity độc lập cho kết quả đúng.
+- Replay DuckDB sắp theo `event_ts, transaction_id`, compute trước ingest, bỏ ingest
+  UID thiếu nhưng vẫn tiến virtual clock, chỉ xóa key thuộc dự án và chạy lại cho
+  cùng Redis state.
+- API dùng cutoff tường minh hoặc `sys:virtual_now_epoch`, trả HTTP 503 khi thiếu
+  clock và HTTP 422 cho `NaN`/`Infinity`.
+- Test liên quan Giai đoạn 6: 19 passed trong 1,75 giây.
+- Toàn bộ tests sau Giai đoạn 6: 64 passed trong 10,69 giây.
+- README mô tả đúng workflow Giai đoạn 6, có lệnh Redis Docker/replay/API, endpoint,
+  test mục tiêu, source tree mới và liên kết hướng dẫn chi tiết.
+- Tất cả path local được thêm vào README tồn tại; kiểm tra Markdown/diff không báo
+  lỗi.
+- Controlled leakage analysis Run All thành công trong 78,9 giây trên 370.770
+  eligible rows và 74.155 held-out rows; 19 code cell có execution count 1-19,
+  không error và metric bốn model không đổi.
+- Timeline dùng transaction test thật `3417954` tại cutoff
+  `2018-04-05 23:19:56`: 3 event trước cutoff, 1 event tại cutoff bị loại và 4
+  event sau cutoff trong cửa sổ 24 giờ.
+- Held-out permutation importance theo average precision cho cả bốn future feature
+  đều dương; cao nhất là `time_to_next_txn_sec` với
+  `0.033729 ± 0.000523`.
+- 50 grouped future-block shuffles (không retrain) cho mean:
+  - ROC-AUC `0.581831 ± 0.004504`, thấp hơn original PIT + Future `0.705485`
+    ở cả 50/50 lần; original-minus-shuffled mean `+0.123655`.
+  - PR-AUC `0.043190 ± 0.000695`, thấp hơn original `0.074536` ở cả 50/50
+    lần; original-minus-shuffled mean `+0.031346`.
+- 500/500 paired bootstrap samples hợp lệ:
+  - ROC-AUC delta point `+0.025702`, mean `+0.025659`, percentile 95% CI
+    `[+0.018583, +0.032644]`, proportion delta dương `1.000`.
+  - PR-AUC delta point `+0.006641`, mean `+0.006828`, percentile 95% CI
+    `[+0.004260, +0.009443]`, proportion delta dương `1.000`.
+- Test mục tiêu cho leakage/offline/boundary/catalog: 38 passed trong 3,95 giây.
+- Toàn bộ test sau task 4.4: 65 passed trong 9,74 giây; còn một
+  `StarletteDeprecationWarning` đã biết.
+
+- Parity integration chạy trên 64 mẫu deterministic và so đủ bốn feature, tương
+  đương 256 phép so; kết quả mismatch bằng 0.
+- Test mismatch có chủ đích trả đúng context gồm `label_id`, `uid`, `cutoff_ts`,
+  tên feature, giá trị offline/online và lý do; report CLI trả exit code 1.
+- Test riêng Giai đoạn 7: 6 passed trong 1,65 giây.
+- Toàn bộ test sau Giai đoạn 7: 71 passed trong 10,25 giây; còn một
+  `StarletteDeprecationWarning` đã biết.
 
 ## 8. Vấn đề còn lại
 
-- Chưa có online engine.
-- Chưa có parity test.
+- Chưa chạy replay toàn bộ 590.540 giao dịch hoặc API với Redis server thật; test
+  bắt buộc dùng `fakeredis` đã pass nhưng hiệu năng Redis thật chưa được đo. Vì
+  vậy CLI parity chưa được xác minh end-to-end với Redis thật/full warehouse.
+- FastAPI `TestClient` phát một `StarletteDeprecationWarning` về `httpx`/`httpx2`;
+  không ảnh hưởng 71 test nhưng cần xử lý khi task dependency/documentation cho phép.
+- README đã mô tả Giai đoạn 6; task 10.2 vẫn chưa hoàn thành vì workflow parity
+  chưa được bổ sung và toàn bộ hướng dẫn chưa được xác minh từ môi trường sạch.
 - Chưa tái tạo một virtual environment hoàn toàn mới trong lần cập nhật tài liệu;
   các entry point/import được xác minh trên `.venv` hiện có và toàn bộ test đã chạy.
 - Cảnh báo ZMQ/TCP của Jupyter xuất hiện trên Windows khi chạy `nbconvert`, nhưng
   cả hai kernel hoàn tất không error và output notebook được ghi thành công.
+- Paired bootstrap hiện resample theo row và chỉ định lượng uncertainty conditional
+  trên fixed temporal split/fitted models; chưa bao phủ retraining, split uncertainty
+  hoặc dependence giữa nhiều transaction cùng `uid` (cluster bootstrap là phân tích
+  rộng hơn, ngoài task này).
+- Lượt chạy full test đầu tiên của task 4.4 gặp `WinError 5` tạm thời khi backfill
+  replace catalog snapshot trong thư mục pytest temp; test đó pass ngay khi chạy
+  riêng và full suite kế tiếp pass 65/65, nên không sửa backfill ngoài phạm vi.
 - Catalog, offline engine, warehouse, EDA, leakage experiment, tests và output
   chính thức đã ở cấu trúc mới theo `PROJECT_SPEC.md` mục 21.
 - `tests/integration/test_stage1.py` vẫn phụ thuộc CSV Kaggle, report và
@@ -519,12 +686,12 @@ phân mảnh mạnh như candidate có `D1`.
   với raw CSV là integration đúng nghĩa.
 - Không còn file Python nghiên cứu/entity-selection dư thừa ở root.
 
-Các nội dung online engine/parity thuộc các giai đoạn sau và chưa được bắt đầu
-trong lần làm việc này.
+Giai đoạn 7 đã hoàn thành trong phạm vi module parity, CLI và test tự động; không
+thực hiện nội dung monitoring của Giai đoạn 8.
 
 ## 9. Task tiếp theo
 
-Task tiếp theo theo `TODO.md` là **6.1 — tạo online engine**.
-Chưa bắt đầu Giai đoạn 6; cần chờ người dùng xác nhận riêng.
+Task tiếp theo theo `TODO.md` là **8.1 — Freshness monitoring**.
+Chưa bắt đầu Giai đoạn 8; cần chờ người dùng xác nhận riêng.
 
 Không tự thực hiện cho đến khi có yêu cầu.

@@ -140,6 +140,32 @@ Hoàn thành khi có ROC-AUC/PR-AUC cho cả PIT và leaky. Không yêu cầu le
 
 **Kết quả:** xem `STATUS.md` mục 7 — 3 model đã train (PIT, future-only, pit_plus_future), số liệu ROC-AUC/PR-AUC đầy đủ, kết luận dựa trên số liệu thực tế.
 
+### [x] 4.4 Controlled leakage analysis dựa trên research
+
+File liên quan: `notebooks/02_leakage_experiment.ipynb`,
+`tests/unit/test_leakage_experiment.py`.
+
+Hoàn thành khi:
+
+- Phân biệt rõ leakage existence (availability violation) với measured impact.
+- Có timeline từ transaction thật minh họa event trước, tại và sau cutoff.
+- Có permutation importance của PIT + Future model trên held-out test set với
+  scoring average precision.
+- Có grouped future-block shuffle 30-100 lần, giữ model/PIT/label/test rows và
+  không retrain.
+- Có paired bootstrap ít nhất 500 lần, dùng cùng row indices cho PIT và
+  PIT + Future, báo point estimate, 95% interval và proportion delta dương.
+- Evidence summary, conclusion và Markdown report lấy kết quả từ runtime variables,
+  không hard-code hoặc ép kết luận ngược dữ liệu.
+- Section/chart/report title giữ tiếng Anh; phần mô tả, interpretation và
+  conclusion viết bằng tiếng Việt.
+- Notebook Run All từ kernel sạch, JSON/schema/code cell hợp lệ và test liên quan pass.
+
+**Kết quả:** notebook chạy đủ 19 code cell; 50 future-block permutations và 500
+paired bootstrap samples hoàn tất deterministic. Xem `STATUS.md` mục 7 cho kết quả
+thực nghiệm và uncertainty interval. Notebook/report dùng title tiếng Anh và phần
+diễn giải tiếng Việt.
+
 ---
 
 ## Giai đoạn 4.5 — Migrate sang cấu trúc src-layout
@@ -271,25 +297,27 @@ Hoàn thành khi: backfill output khớp `pit_features` trên cùng khoảng th�
 
 ## Giai đoạn 6 — Online engine và API
 
-### [ ] 6.1 Tạo online engine
+**Trạng thái: [x] Hoàn thành toàn bộ Giai đoạn 6 (6.1-6.4).**
+
+### [x] 6.1 Tạo online engine
 
 Tạo: `src/pit_feature_store/online_engine.py`
 
 Hoàn thành khi có: `ingest_event()`, `compute_features()`, Redis ZSET, catalog-driven calculation.
 
-### [ ] 6.2 Tạo online replay
+### [x] 6.2 Tạo online replay
 
 Tạo: `scripts/run_online_replay.py`
 
 Hoàn thành khi: dọn Redis cũ, replay đúng thứ tự, compute trước ingest, có virtual clock.
 
-### [ ] 6.3 Tạo serving API
+### [x] 6.3 Tạo serving API
 
 Tạo: `src/pit_feature_store/serving.py` (FastAPI app object), `scripts/run_api.py` (chạy uvicorn)
 
 Hoàn thành khi: có endpoint `/features/{uid}`, trả đủ bốn feature, hỗ trợ `as_of_epoch`, trả 503 khi thiếu virtual clock.
 
-### [ ] 6.4 Test online engine và API
+### [x] 6.4 Test online engine và API
 
 Tạo: `tests/unit/test_online_engine.py` (dùng `fakeredis`, không cần Redis thật), `tests/integration/test_serving_api.py` (FastAPI `TestClient` + `fakeredis`)
 
@@ -299,13 +327,15 @@ Hoàn thành khi test pass. Thêm `fakeredis`, `httpx` vào `requirements.txt` n
 
 ## Giai đoạn 7 — Parity
 
-### [ ] 7.1 Tạo parity script
+**Trạng thái: [x] Hoàn thành toàn bộ Giai đoạn 7 (7.1-7.2).**
+
+### [x] 7.1 Tạo parity script
 
 Tạo: `src/pit_feature_store/parity.py` (logic), `scripts/run_parity.py` (CLI)
 
 Hoàn thành khi: kiểm tra ≥50 mẫu, so đủ bốn feature, chuẩn hoá missing values, in thông tin mismatch nếu có.
 
-### [ ] 7.2 Tạo parity pytest
+### [x] 7.2 Tạo parity pytest
 
 Tạo: `tests/integration/test_parity.py`
 
@@ -362,6 +392,15 @@ Ghi chú 2026-08-11: README đã được chuẩn hóa cho workflow notebook EDA
 sau khi bỏ hai test model/report không còn thuộc trách nhiệm của `leakage.py`.
 Task vẫn để `[ ]` vì cần bổ sung/kiểm tra lại workflow online và parity sau khi
 các giai đoạn 6-7 được triển khai.
+
+Cập nhật 2026-08-14: README đã mô tả online replay, Redis virtual clock, serving
+API, test Giai đoạn 6 và liên kết hướng dẫn Docker chi tiết. Task 10.2 vẫn để
+`[ ]` vì parity Giai đoạn 7 và lượt xác minh toàn bộ tài liệu từ môi trường sạch
+chưa được thực hiện.
+
+Cập nhật sau Giai đoạn 7: parity đã được triển khai và test pass, nhưng task 10.2
+vẫn để `[ ]` vì workflow parity chưa được bổ sung vào README và tài liệu chưa được
+xác minh end-to-end từ môi trường sạch trong task có phạm vi riêng này.
 
 ### [ ] 10.3 Dọn repo
 
