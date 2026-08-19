@@ -6,6 +6,7 @@ lightgbm==4.7.0
 fastapi==0.140.0
 uvicorn==0.51.0
 redis==8.0.1
+fakeredis==2.37.0
 pydantic==2.13.4
 pyyaml==6.0.3
 click==8.4.2
