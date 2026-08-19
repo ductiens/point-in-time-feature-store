@@ -2,13 +2,16 @@
 
 Feature store tối giản cho bộ dữ liệu [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection), tập trung vào tính đúng tại thời điểm dự đoán (point-in-time correctness). Dự án dùng DuckDB cho offline store và chứng minh rolling feature không sử dụng giao dịch hiện tại hoặc dữ liệu tương lai.
 
-> Trạng thái hiện tại: warehouse, feature catalog, offline engine, leakage experiment và backfill đã hoàn thành. Redis/FastAPI online engine, offline-online parity và monitoring chưa được triển khai.
+> Trạng thái hiện tại: warehouse, feature catalog, offline engine, leakage
+> experiment, backfill và Redis/FastAPI online engine đã hoàn thành.
+> Offline-online parity và monitoring chưa được triển khai.
 
 ## Mục tiêu
 
 - Tính feature theo khoảng `[cutoff - window, cutoff)`: bao gồm biên dưới và loại trừ đúng cutoff.
 - Sinh feature từ catalog YAML thay vì hard-code tên và cửa sổ ở nhiều nơi.
 - So sánh PIT-correct feature với future-looking feature bằng temporal split.
+- Replay raw event vào Redis và phục vụ cùng feature catalog qua FastAPI.
 - Kiểm chứng các biên thời gian và kết quả tính toán bằng test tự động.
 
 ## Workflow
@@ -18,15 +21,15 @@ Raw data
     ↓
 01_eda_and_entity_selection.ipynb
     ↓
-Warehouse
-    ↓
-Feature catalog
-    ↓
-Offline PIT features
-    ↓
-02_leakage_experiment.ipynb
-    ↓
-Backfill
+Warehouse + Feature catalog
+    ├── Offline PIT features
+    │       ├── 02_leakage_experiment.ipynb
+    │       └── Versioned backfill
+    └── Online replay
+            ↓
+        Redis ZSET raw events + virtual clock
+            ↓
+        FastAPI GET /features/{uid}
 ```
 
 Hai notebook là nơi trình bày EDA, visualization, research reasoning, baseline,
@@ -34,6 +37,11 @@ model comparison và evaluation. `src/pit_feature_store/` giữ logic dữ liệ
 tái sử dụng như validation, warehouse, catalog, PIT/future feature calculation và
 chuẩn bị modeling dataset; `leakage.py` không chứa code train/evaluate model hoặc
 research report.
+
+`online_engine.py` đọc cùng feature catalog, tự tính feature từ raw Redis event
+và không copy feature đã tính từ DuckDB. Replay luôn compute trước khi ingest
+transaction hiện tại; `serving.py` dùng virtual clock của dataset nếu request
+không truyền cutoff.
 
 Pseudo-entity đang dùng là `card1 + card2 + addr1`, được chọn từ kết quả thực nghiệm: độ phủ 87,45%, 60,49% entity có từ hai giao dịch và 97,15% dòng có UID thuộc entity lặp lại.
 
@@ -60,10 +68,12 @@ Vì vậy, event tại đúng `cutoff - window` được tính; event tại đú
 
 - Python 3.11 trở lên (đã xác minh với Python 3.13.7).
 - Windows PowerShell cho các lệnh bên dưới.
+- Docker Desktop hoặc một Redis server tương thích để chạy replay/API thật.
 - Tài khoản Kaggle đã chấp nhận điều khoản cuộc thi IEEE-CIS nếu tải dữ liệu bằng Kaggle CLI.
 - Khoảng trống đĩa đủ cho CSV gốc, DuckDB warehouse và notebook output.
 
-Redis không cần thiết ở trạng thái hiện tại vì online engine chưa được triển khai.
+Unit/integration test Giai đoạn 6 dùng `fakeredis`, vì vậy chạy test không bắt
+buộc Docker hoặc Redis server thật.
 
 ## Cài đặt từ môi trường mới
 
@@ -82,7 +92,7 @@ python -m pip install -e .
 Kiểm tra package và các dependency chính:
 
 ```powershell
-python -c "import duckdb, pandas, pyarrow, sklearn, lightgbm; import pit_feature_store; print(pit_feature_store.__file__)"
+python -c "import duckdb, pandas, pyarrow, sklearn, lightgbm, redis, fastapi, fakeredis; import pit_feature_store; print(pit_feature_store.__file__)"
 ```
 
 ## Chuẩn bị dữ liệu
@@ -197,12 +207,65 @@ artifacts/offline_store/backfill/version=<catalog-version>-<fingerprint>/<start>
 Catalog snapshot nằm cạnh Parquet; log mỗi lần chạy nằm tại
 `artifacts/logs/backfill_log.jsonl`.
 
+### 6. Khởi động Redis và chạy online replay
+
+Hướng dẫn Docker, kiểm tra Redis, gọi API và troubleshooting đầy đủ nằm tại
+[STAGE6_ONLINE_ENGINE_API.md](STAGE6_ONLINE_ENGINE_API.md).
+
+Quick start cho local development:
+
+```powershell
+docker pull redis:8.8.0-alpine
+docker run --name pit-redis --detach --publish 127.0.0.1:6379:6379 redis:8.8.0-alpine
+docker exec pit-redis redis-cli ping
+
+$env:REDIS_URL = "redis://127.0.0.1:6379/0"
+python scripts/run_online_replay.py
+```
+
+Replay đọc `transactions` theo `event_ts, transaction_id`, xóa riêng
+`events:*` và `sys:virtual_now_epoch`, tính feature trước khi ingest rồi cập
+nhật virtual clock. Key không thuộc dự án không bị xóa.
+
+Kiểm tra clock sau replay:
+
+```powershell
+docker exec pit-redis redis-cli GET sys:virtual_now_epoch
+```
+
+### 7. Chạy serving API
+
+Mở PowerShell thứ hai tại repository:
+
+```powershell
+$env:REDIS_URL = "redis://127.0.0.1:6379/0"
+python scripts/run_api.py
+```
+
+Swagger UI: <http://127.0.0.1:8000/docs>
+
+Endpoint:
+
+```text
+GET /features/{uid}
+GET /features/{uid}?as_of_epoch=<epoch>
+```
+
+Nếu bỏ `as_of_epoch`, API dùng `sys:virtual_now_epoch`; nếu clock chưa tồn tại,
+API trả HTTP 503. Response chứa trực tiếp đủ bốn feature trong catalog.
+
 ## Chạy test
 
-Unit test không cần dataset Kaggle hoặc service ngoài:
+Unit test và test API Giai đoạn 6 không cần Redis server thật:
 
 ```powershell
 python -m pytest tests/unit -v
+```
+
+Chạy riêng Giai đoạn 6:
+
+```powershell
+python -m pytest tests/unit/test_online_engine.py tests/integration/test_online_replay.py tests/integration/test_serving_api.py -v
 ```
 
 Toàn bộ test:
@@ -213,7 +276,8 @@ python -m pytest tests -v
 
 Integration test Stage 1 yêu cầu raw data và warehouse thật; các test backfill dùng
 warehouse nhỏ tự tạo. Test hiện tại bao phủ catalog validation, PIT boundaries,
-temporal split, backfill idempotency và backfill/full-pipeline equality.
+temporal split, backfill idempotency, backfill/full-pipeline equality, Redis
+online semantics, deterministic replay và FastAPI virtual-clock behavior.
 
 ## Cấu trúc repository
 
@@ -227,18 +291,23 @@ temporal split, backfill idempotency và backfill/full-pipeline equality.
 │   └── 02_leakage_experiment.ipynb
 ├── scripts/
 │   ├── init_warehouse.py
-│   └── run_backfill.py
+│   ├── run_backfill.py
+│   ├── run_online_replay.py
+│   └── run_api.py
 ├── src/pit_feature_store/
 │   ├── backfill.py
 │   ├── catalog.py
 │   ├── entity_selection.py
 │   ├── leakage.py
 │   ├── offline_engine.py
+│   ├── online_engine.py
+│   ├── serving.py
 │   └── warehouse.py
 ├── tests/
 │   ├── integration/
 │   └── unit/
 ├── artifacts/                     # Git ignored
+├── STAGE6_ONLINE_ENGINE_API.md
 ├── pyproject.toml
 └── requirements.txt
 ```
@@ -248,6 +317,7 @@ temporal split, backfill idempotency và backfill/full-pipeline equality.
 ## Giới hạn hiện tại
 
 - UID là pseudo-entity, không phải customer ID thật; các giao dịch thiếu `card1`, `card2` hoặc `addr1` không có UID.
-- Chưa có Redis replay, virtual clock, FastAPI serving hoặc offline-online parity.
+- Chưa có offline-online parity; nội dung này thuộc Giai đoạn 7.
+- Chưa benchmark replay toàn bộ 590.540 transaction hoặc API với Redis server thật.
 - Integration test vẫn phụ thuộc full Kaggle dataset và artifact được tạo trước.
 - Các path runtime là path tương đối, vì vậy cần chạy lệnh từ thư mục gốc repository.
